@@ -15,5 +15,5 @@
     "noUncheckedIndexedAccess": true,
     "types": ["@earendil-works/pi-coding-agent"],
   },
-  "include": ["src"],
+  "include": ["src", "tests"],
 }
