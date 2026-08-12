@@ -1,6 +1,6 @@
 {
   "name": "@0x-jerry/pi-package",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "My personalized pi package: extensions, skills, prompts, and themes",
   "repository": {
     "type": "git",
