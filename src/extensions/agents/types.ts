@@ -2,7 +2,7 @@ import type { AgentToolResult } from '@earendil-works/pi-agent-core'
 import type { Message } from '@earendil-works/pi-ai'
 
 /** Where an agent definition lives. */
-export type AgentSource = 'user' | 'project' | 'prompt'
+export type AgentSource = 'builtin' | 'user' | 'project'
 
 export interface AgentConfig {
   name: string
@@ -33,8 +33,9 @@ export interface SingleResult {
   cwd?: string
   /**
    * Final system prompt the subagent ran with: the agent's prompt with
-   * $1/$@ placeholders filled from the task, plus project context, skills,
-   * APPEND_SYSTEM.md and the cwd footer (what the model actually saw).
+   * project context, skills, APPEND_SYSTEM.md and the cwd footer appended
+   * (what the model actually saw). The task itself is sent as the session's
+   * user prompt, not embedded here.
    */
   systemPrompt?: string
   exitCode: number

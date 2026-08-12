@@ -8,8 +8,8 @@
  * `DefaultResourceLoader`, so the subagent sees exactly the environment a
  * spawned `pi` process would: extensions, skills, prompt templates, themes,
  * AGENTS.md context files, and APPEND_SYSTEM.md. Events (messages, usage,
- * tool calls) stream back to the parent session through the same
- * `SingleResult` shape, so the TUI rendering is unchanged.
+ * tool calls) stream back to the parent session as a `SingleResult` for the
+ * TUI to render.
  *
  * Trade-offs vs. spawning a `pi` process:
  * - Faster startup: no process spawn or CLI bootstrap; a single shared
@@ -36,7 +36,6 @@ import {
   SettingsManager,
 } from '@earendil-works/pi-coding-agent'
 import { emptyResult, getFinalOutput } from './result.ts'
-import { substituteTemplateArgs } from './prompts.ts'
 import type { AgentConfig, OnUpdateCallback, SingleResult } from './types.ts'
 
 /**
@@ -62,14 +61,14 @@ function getSharedModelRuntime(): Promise<ModelRuntime> {
 }
 
 /**
- * Full-environment ResourceLoader for a subagent.
+ * ResourceLoader for a subagent session.
  *
- * Uses a `DefaultResourceLoader` so the subagent sees exactly what a spawned
- * `pi --mode json -p` process would: extensions (including this package's
- * own tools), skills, prompt templates, themes, AGENTS.md context files and
- * APPEND_SYSTEM.md. The agent's system prompt (with $1/$@ placeholders
- * filled from the task) replaces the base system prompt; `buildSystemPrompt`
- * still appends project context, skills, and the cwd footer.
+ * Wraps a `DefaultResourceLoader` so the subagent gets the full pi
+ * environment (extensions, skills, prompt templates, themes, AGENTS.md
+ * context files, APPEND_SYSTEM.md) with the agent's system prompt replacing
+ * the base one; `buildSystemPrompt` still appends project context, skills,
+ * and the cwd footer. The task is sent separately as the session's user
+ * prompt.
  *
  * The parent's project-trust decision is threaded through: an untrusted
  * project's `.pi/extensions` (arbitrary code), packages, skills and prompt
@@ -78,7 +77,6 @@ function getSharedModelRuntime(): Promise<ModelRuntime> {
  */
 function createSubagentResourceLoader(
   agent: AgentConfig,
-  task: string,
   cwd: string,
   projectTrusted: boolean,
 ): DefaultResourceLoader {
@@ -88,8 +86,7 @@ function createSubagentResourceLoader(
     settingsManager: SettingsManager.create(cwd, getAgentDir(), {
       projectTrusted,
     }),
-    systemPromptOverride: () =>
-      substituteTemplateArgs(agent.systemPrompt, task),
+    systemPromptOverride: () => agent.systemPrompt,
   })
 }
 
@@ -190,12 +187,10 @@ export async function runSingleAgent(
 
   const resourceLoader = createSubagentResourceLoader(
     agent,
-    task,
     cwd,
     projectTrusted,
   )
-  // Full discovery (extensions, skills, prompts, packages, context files) —
-  // the same work a spawned `pi` process does at startup.
+  // Full discovery (extensions, skills, prompts, packages, context files).
   await resourceLoader.reload()
 
   let session: AgentSession | undefined
@@ -216,13 +211,13 @@ export async function runSingleAgent(
     session = created.session
     const runSession = session
 
-    // Capture the exact system prompt the subagent runs with (task
-    // substituted, context files/skills/APPEND_SYSTEM.md appended) so the
-    // TUI can display it in the result.
+    // Capture the exact system prompt the subagent runs with (context
+    // files/skills/APPEND_SYSTEM.md appended) so the TUI can display it in
+    // the result.
     currentResult.systemPrompt = session.systemPrompt
 
-    // Forward subagent messages to the parent session, mirroring the JSON
-    // event stream the spawned-process approach parsed.
+    // Forward subagent messages to the parent session so they show up in
+    // the tool result transcript.
     runSession.subscribe((event) => {
       if (event.type !== 'message_end' || !event.message) return
       // AgentMessage can include custom (non-LLM) message types; the
@@ -266,6 +261,8 @@ export async function runSingleAgent(
     }
 
     try {
+      // The task is the session's user prompt — a fresh user message on top
+      // of the static agent system prompt.
       // expandPromptTemplates: false keeps tasks that start with "/"
       // (e.g. absolute paths) literal instead of treating them as commands.
       await runSession.prompt(task, { expandPromptTemplates: false })

@@ -13,22 +13,32 @@
  *   System prompt for the agent goes here.
  *
  * Agent levels (later levels override earlier ones on name conflicts):
- *   1. Prompt templates  ~/.pi/agent/prompts/, <project>/.pi/prompts/,
- *                         settings `prompts`, installed package `pi.prompts`
+ *   1. Builtin agents      <package>/src/extensions/agents/builtin/*.md
  *   2. User-level agents   ~/.pi/agent/agents/*.md     (all projects)
  *   3. Project-local agents <project>/.pi/agents/*.md   (nearest ancestor dir)
  */
 
 import * as fs from 'node:fs'
 import * as path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { LRUCache } from 'lru-cache'
 import {
   CONFIG_DIR_NAME,
   getAgentDir,
   parseFrontmatter,
 } from '@earendil-works/pi-coding-agent'
-import { discoverPromptTemplateAgents } from './prompts.ts'
 import type { AgentConfig, AgentSource } from './types.ts'
+
+/**
+ * Builtin agents ship with this package in the `builtin/` folder next to
+ * this module. Resolved from the module URL so it works whether the package
+ * runs from a local checkout, a linked workspace, or an installed npm
+ * dependency.
+ */
+const builtinAgentsDir = path.join(
+  path.dirname(fileURLToPath(import.meta.url)),
+  'builtin',
+)
 
 /**
  * LRU cache of discovered agents, keyed by `${cwd}\0${agentDir}\0${trust}`.
@@ -150,7 +160,13 @@ export async function discoverAgents(
   const userDir = path.join(agentDir, 'agents')
   const projectAgentsDir = findNearestProjectAgentsDir(cwd)
 
-  const promptAgents = await discoverPromptTemplateAgents(cwd, projectTrusted)
+  // Builtin agents ship with this package; user agents override them and
+  // project agents override both on name conflicts. Builtin agents are
+  // trusted by definition — they are part of the package, not project files.
+  const builtinAgents = loadAgentsFromDir({
+    dir: builtinAgentsDir,
+    source: 'builtin',
+  })
   const userAgents = loadAgentsFromDir({ dir: userDir, source: 'user' })
   // An untrusted project's agent files are not loaded at all.
   const projectAgents =
@@ -158,9 +174,10 @@ export async function discoverAgents(
       ? loadAgentsFromDir({ dir: projectAgentsDir, source: 'project' })
       : []
 
-  // Prompt templates first; agent files override on name conflicts.
+  // Builtin agents first; user and project agent files override on name
+  // conflicts.
   const agentMap = new Map<string, AgentConfig>()
-  for (const agent of promptAgents) agentMap.set(agent.name, agent)
+  for (const agent of builtinAgents) agentMap.set(agent.name, agent)
   for (const agent of userAgents) agentMap.set(agent.name, agent)
   for (const agent of projectAgents) agentMap.set(agent.name, agent)
 

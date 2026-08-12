@@ -32,7 +32,7 @@ export default function (pi: ExtensionAPI) {
     description: [
       'Delegate a task to a specialized subagent with an isolated context window.',
       'The subagent runs in-process via the pi SDK with its own system prompt, tool allowlist, and the full environment (extensions, skills, prompt templates, AGENTS.md context).',
-      `Agents are discovered from all levels pi supports: user agents in ${path.join(getAgentDir(), 'agents')}, project agents in ${CONFIG_DIR_NAME}/agents, plus prompt templates from ${CONFIG_DIR_NAME}/prompts, settings, and installed packages (e.g. the /reviewer template).`,
+      `Agents are discovered from all levels: builtin agents shipped with this package, user agents in ${path.join(getAgentDir(), 'agents')}, and project agents in ${CONFIG_DIR_NAME}/agents.`,
     ].join(' '),
     parameters: SubagentParams,
 

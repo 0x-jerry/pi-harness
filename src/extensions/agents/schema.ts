@@ -3,7 +3,7 @@ import { Type, type Static } from 'typebox'
 export const SubagentParams = Type.Object({
   agent: Type.String({
     description:
-      'Name of the agent or prompt template to invoke (agent files, or /-style prompt templates like "reviewer")',
+      'Name of the agent to invoke (builtin agents, or agent files from user/project levels)',
   }),
   task: Type.String({ description: 'Task to delegate to the agent' }),
   cwd: Type.Optional(
