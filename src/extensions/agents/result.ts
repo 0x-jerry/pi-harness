@@ -1,5 +1,5 @@
 import type { Message } from '@earendil-works/pi-ai'
-import type { DisplayItem, SingleResult, UsageStats } from './types.ts'
+import type { SingleResult, UsageStats } from './types.ts'
 
 export function emptyUsage(): UsageStats {
   return {
@@ -61,24 +61,4 @@ export function getResultOutput(result: SingleResult): string {
     )
   }
   return getFinalOutput(result.messages) || '(no output)'
-}
-
-/** Assistant text + tool-call parts, in order, for display. */
-export function getDisplayItems(messages: Message[]): DisplayItem[] {
-  const items: DisplayItem[] = []
-  for (const msg of messages) {
-    if (msg.role === 'assistant') {
-      for (const part of msg.content) {
-        if (typeof part !== 'object') continue
-        if (part.type === 'text') items.push({ type: 'text', text: part.text })
-        else if (part.type === 'toolCall')
-          items.push({
-            type: 'toolCall',
-            name: part.name,
-            args: part.arguments,
-          })
-      }
-    }
-  }
-  return items
 }

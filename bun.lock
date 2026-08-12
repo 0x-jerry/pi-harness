@@ -4,6 +4,9 @@
   "workspaces": {
     "": {
       "name": "pi-packages",
+      "dependencies": {
+        "lru-cache": "^11.5.2",
+      },
       "devDependencies": {
         "@0x-jerry/x-release": "^3.0.5",
         "@earendil-works/pi-ai": "^0.84.1",

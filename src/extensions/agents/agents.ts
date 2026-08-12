@@ -13,8 +13,10 @@
  *   System prompt for the agent goes here.
  *
  * Agent levels (later levels override earlier ones on name conflicts):
- *   1. User-level agents   ~/.pi/agent/agents/*.md     (all projects)
- *   2. Project-local agents <project>/.pi/agents/*.md   (nearest ancestor dir)
+ *   1. Prompt templates  ~/.pi/agent/prompts/, <project>/.pi/prompts/,
+ *                         settings `prompts`, installed package `pi.prompts`
+ *   2. User-level agents   ~/.pi/agent/agents/*.md     (all projects)
+ *   3. Project-local agents <project>/.pi/agents/*.md   (nearest ancestor dir)
  */
 
 import * as fs from 'node:fs'
@@ -24,6 +26,7 @@ import {
   getAgentDir,
   parseFrontmatter,
 } from '@earendil-works/pi-coding-agent'
+import { discoverPromptTemplateAgents } from './prompts.ts'
 import type { AgentConfig, AgentSource } from './types.ts'
 
 function loadAgentsFromDir(options: {
@@ -102,17 +105,19 @@ function findNearestProjectAgentsDir(cwd: string): string | null {
   }
 }
 
-export function discoverAgents(cwd: string): AgentConfig[] {
+export async function discoverAgents(cwd: string): Promise<AgentConfig[]> {
   const userDir = path.join(getAgentDir(), 'agents')
   const projectAgentsDir = findNearestProjectAgentsDir(cwd)
 
+  const promptAgents = await discoverPromptTemplateAgents(cwd)
   const userAgents = loadAgentsFromDir({ dir: userDir, source: 'user' })
   const projectAgents = projectAgentsDir
     ? loadAgentsFromDir({ dir: projectAgentsDir, source: 'project' })
     : []
 
-  // User agents first; project agents override on name conflicts.
+  // Prompt templates first; agent files override on name conflicts.
   const agentMap = new Map<string, AgentConfig>()
+  for (const agent of promptAgents) agentMap.set(agent.name, agent)
   for (const agent of userAgents) agentMap.set(agent.name, agent)
   for (const agent of projectAgents) agentMap.set(agent.name, agent)
 

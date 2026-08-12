@@ -6,6 +6,7 @@
     "registry": "https://registry.npmjs.org",
     "access": "public"
   },
+  "files": ["src"],
   "keywords": [
     "pi-package"
   ],
@@ -34,5 +35,8 @@
     "@earendil-works/pi-ai": "^0.84.1",
     "@earendil-works/pi-coding-agent": "^0.84.1",
     "typescript": "^7.0.2"
+  },
+  "dependencies": {
+    "lru-cache": "^11.5.2"
   }
 }

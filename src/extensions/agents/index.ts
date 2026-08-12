@@ -1,14 +1,12 @@
 /**
  * Subagent Tool - Delegate a task to a specialized agent.
  *
- * Spawns a separate `pi` process per invocation, giving it an isolated
- * context window and its own agent-specific system prompt.
+ * Runs the subagent in-process via the pi SDK (`createAgentSession`): an
+ * isolated context window (in-memory session) with its own agent-specific
+ * system prompt and tool allowlist. Events (messages, usage, tool calls)
+ * stream back to the parent session and render in the TUI.
  *
  * Usage: { agent: "name", task: "..." }
- *
- * The subagent runs `pi --mode json -p --no-session` so its structured
- * event stream (messages, usage, tool calls) can be streamed back to the
- * parent session and rendered in the TUI.
  */
 
 import * as path from 'node:path'
@@ -33,16 +31,13 @@ export default function (pi: ExtensionAPI) {
     label: 'Subagent',
     description: [
       'Delegate a task to a specialized subagent with an isolated context window.',
-      'The subagent runs in a separate pi process with its own system prompt.',
-      `Agents are discovered from all levels pi supports: user agents in ${path.join(getAgentDir(), 'agents')} and project agents in ${CONFIG_DIR_NAME}/agents.`,
+      'The subagent runs in-process via the pi SDK with its own system prompt, tool allowlist, and the full environment (extensions, skills, prompt templates, AGENTS.md context).',
+      `Agents are discovered from all levels pi supports: user agents in ${path.join(getAgentDir(), 'agents')}, project agents in ${CONFIG_DIR_NAME}/agents, plus prompt templates from ${CONFIG_DIR_NAME}/prompts, settings, and installed packages (e.g. the /reviewer template).`,
     ].join(' '),
     parameters: SubagentParams,
 
     async execute(_toolCallId, params, signal, onUpdate, ctx) {
-      const agents = discoverAgents(ctx.cwd)
-      const parentModel = ctx.model
-        ? `${ctx.model.provider}/${ctx.model.id}`
-        : undefined
+      const agents = await discoverAgents(ctx.cwd)
 
       const result = await runSingleAgent({
         agents,
@@ -52,7 +47,10 @@ export default function (pi: ExtensionAPI) {
         cwd: params.cwd,
         signal,
         onUpdate,
-        parentModel,
+        // Inherit the parent session's active model + thinking level so a
+        // subagent without a pinned model behaves like the current session.
+        parentModel: ctx.model,
+        parentThinkingLevel: ctx.thinkingLevel,
       })
       const isError = isFailedResult(result)
       if (isError) {

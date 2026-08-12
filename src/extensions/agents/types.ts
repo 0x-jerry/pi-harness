@@ -2,7 +2,7 @@ import type { AgentToolResult } from '@earendil-works/pi-agent-core'
 import type { Message } from '@earendil-works/pi-ai'
 
 /** Where an agent definition lives. */
-export type AgentSource = 'user' | 'project'
+export type AgentSource = 'user' | 'project' | 'prompt'
 
 export interface AgentConfig {
   name: string
@@ -29,6 +29,8 @@ export interface SingleResult {
   agent: string
   agentSource: AgentSource | 'unknown'
   task: string
+  /** Working directory the subagent ran in (for rendering tool paths). */
+  cwd?: string
   exitCode: number
   messages: Message[]
   stderr: string
@@ -37,10 +39,6 @@ export interface SingleResult {
   stopReason?: string
   errorMessage?: string
 }
-
-export type DisplayItem =
-  | { type: 'text'; text: string }
-  | { type: 'toolCall'; name: string; args: Record<string, any> }
 
 export type OnUpdateCallback = (
   partial: AgentToolResult<SingleResult>,
