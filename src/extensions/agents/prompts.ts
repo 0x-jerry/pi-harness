@@ -59,11 +59,14 @@ function parsePromptTemplateFile(filePath: string): TemplateFile | null {
     const rawContent = fs.readFileSync(filePath, 'utf-8')
     const { frontmatter, body } =
       parseFrontmatter<Record<string, string>>(rawContent)
-    const name = path.basename(filePath).replace(/\.md$/, '')
+    const name = path.basename(filePath).replace(/\.md$/i, '')
 
     // Description from frontmatter or the first non-empty line (truncated),
     // matching pi's loadTemplateFromFile.
-    let description = frontmatter.description || ''
+    let description =
+      typeof frontmatter.description === 'string'
+        ? frontmatter.description
+        : ''
     if (!description) {
       const firstLine = body.split('\n').find((line) => line.trim())
       if (firstLine) {
@@ -100,8 +103,11 @@ function loadTemplatesFromDir(dir: string): TemplateFile[] {
 async function discoverViaPackageManager(
   cwd: string,
   agentDir: string,
+  projectTrusted: boolean,
 ): Promise<TemplateFile[]> {
-  const settingsManager = SettingsManager.create(cwd, agentDir)
+  const settingsManager = SettingsManager.create(cwd, agentDir, {
+    projectTrusted,
+  })
   const packageManager = new DefaultPackageManager({
     cwd,
     agentDir,
@@ -119,13 +125,22 @@ async function discoverViaPackageManager(
 
 /**
  * Synchronous fallback (global + project prompt dirs) in case package-manager
- * resolution throws, e.g. on malformed settings.
+ * resolution throws, e.g. on malformed settings. An untrusted project's
+ * prompt dir is skipped.
  */
-function discoverSynchronously(cwd: string, agentDir: string): TemplateFile[] {
+function discoverSynchronously(
+  cwd: string,
+  agentDir: string,
+  projectTrusted: boolean,
+): TemplateFile[] {
   const templates: TemplateFile[] = []
   const globalPromptsDir = path.join(agentDir, 'prompts')
   templates.push(...loadTemplatesFromDir(globalPromptsDir))
-  templates.push(...loadTemplatesFromDir(path.join(cwd, CONFIG_DIR_NAME, 'prompts')))
+  if (projectTrusted) {
+    templates.push(
+      ...loadTemplatesFromDir(path.join(cwd, CONFIG_DIR_NAME, 'prompts')),
+    )
+  }
   return templates
 }
 
@@ -139,17 +154,24 @@ function discoverSynchronously(cwd: string, agentDir: string): TemplateFile[] {
  * values, so `${N:-default}` / `${@:-default}` / `${ARGUMENTS:-default}` are
  * expanded to `$N` / `$@` / `$ARGUMENTS` (or the fallback) in a small pre-pass
  * first — mirroring the coding-agent's full substituteArgs semantics.
+ *
+ * `substituteArgs` re-scans the whole content after each pass, so the raw
+ * task must NOT be substituted in place: `$@` / `$ARGUMENTS` / `${@:N}` inside
+ * an LLM-generated task (shell snippets are common) would be re-expanded to
+ * the task itself. Instead the template is expanded against a unique sentinel
+ * and the raw task is spliced in last, untouched.
  */
 export function substituteTemplateArgs(content: string, task: string): string {
-  const args = [task]
   const expanded = content.replace(
     /\$\{(\d+|@|ARGUMENTS):-([^}]*)\}/g,
     (_match, target: string, fallback: string) => {
-      const value =
-        target === '@' || target === 'ARGUMENTS'
-          ? args[0]
-          : args[parseInt(target, 10) - 1]
-      if (value) {
+      // With a single argument, only `$1` (and `$@`/`$ARGUMENTS`) have a
+      // value; `$2`, `$3`, … fall back to their default.
+      const hasValue =
+        target === '@' || target === 'ARGUMENTS' || target === '1'
+          ? task !== ''
+          : false
+      if (hasValue) {
         return target === '@'
           ? '$@'
           : target === 'ARGUMENTS'
@@ -159,25 +181,40 @@ export function substituteTemplateArgs(content: string, task: string): string {
       return fallback
     },
   )
-  return substituteArgs(expanded, args)
+  return substituteArgs(expanded, [TASK_SENTINEL]).replaceAll(
+    TASK_SENTINEL,
+    task,
+  )
 }
+
+/**
+ * Placeholder substituted for the task during expansion. NUL characters
+ * cannot appear in agent/template files or shell snippets, so the sentinel
+ * cannot collide with real content.
+ */
+const TASK_SENTINEL = '\u0000PI_SUBAGENT_TASK\u0000'
 
 /** Discover prompt templates as agent configs, from all sources pi supports:
  * global, project, settings, and installed packages (including this one).
  * Cached in an LRU with a short TTL since it runs on every tool execution.
+ * An untrusted project contributes no project-local or project-settings
+ * templates.
  */
-export function discoverPromptTemplateAgents(cwd: string): Promise<AgentConfig[]> {
+export function discoverPromptTemplateAgents(
+  cwd: string,
+  projectTrusted: boolean,
+): Promise<AgentConfig[]> {
   const agentDir = getAgentDir()
-  const key = `${cwd}\0${agentDir}`
+  const key = `${cwd}\0${agentDir}\0${projectTrusted ? '1' : '0'}`
   const cached = templateCache.get(key)
   if (cached) return Promise.resolve(cached)
 
   return (async () => {
     let templates: TemplateFile[]
     try {
-      templates = await discoverViaPackageManager(cwd, agentDir)
+      templates = await discoverViaPackageManager(cwd, agentDir, projectTrusted)
     } catch {
-      templates = discoverSynchronously(cwd, agentDir)
+      templates = discoverSynchronously(cwd, agentDir, projectTrusted)
     }
 
     const agents = templates

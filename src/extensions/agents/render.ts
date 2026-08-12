@@ -225,7 +225,7 @@ export function renderSubagentResult(
       messages: r.messages.slice(-COLLAPSED_MESSAGE_COUNT),
       cwd,
       expanded: false,
-      hideThinking: true,
+      hideThinking: false,
     })
     if (transcript.length === 0) {
       container.addChild(new Text(theme.fg('muted', '(no output)'), 0, 0))

@@ -37,14 +37,24 @@ export default function (pi: ExtensionAPI) {
     parameters: SubagentParams,
 
     async execute(_toolCallId, params, signal, onUpdate, ctx) {
-      const agents = await discoverAgents(ctx.cwd)
+      // Discover agents relative to the directory the subagent will run in,
+      // so delegating into another project picks up that project's agents.
+      const parentCwd = path.resolve(ctx.cwd)
+      const subagentCwd = path.resolve(ctx.cwd, params.cwd ?? '.')
+      // The parent's trust decision only applies to the parent's directory;
+      // a different target directory has no decision, so its project
+      // resources (extensions, skills, prompts) are treated as untrusted.
+      const projectTrusted =
+        subagentCwd === parentCwd ? ctx.isProjectTrusted() : false
+
+      const agents = await discoverAgents(subagentCwd, projectTrusted)
 
       const result = await runSingleAgent({
         agents,
         agentName: params.agent,
         task: params.task,
-        defaultCwd: ctx.cwd,
-        cwd: params.cwd,
+        cwd: subagentCwd,
+        projectTrusted,
         signal,
         onUpdate,
         // Inherit the parent session's active model + thinking level so a
@@ -52,19 +62,14 @@ export default function (pi: ExtensionAPI) {
         parentModel: ctx.model,
         parentThinkingLevel: ctx.thinkingLevel,
       })
-      const isError = isFailedResult(result)
-      if (isError) {
-        const errorMsg = getResultOutput(result)
-        return {
-          content: [
-            {
-              type: 'text',
-              text: `Agent ${result.stopReason || 'failed'}: ${errorMsg}`,
-            },
-          ],
-          details: result,
-          isError: true,
-        }
+      if (isFailedResult(result)) {
+        // The harness marks a tool result as an error only when execute()
+        // throws (the built-in bash tool throws on nonzero exit codes), so
+        // hard failures must throw rather than return `isError`. Partial
+        // output already streamed via onUpdate.
+        throw new Error(
+          `Agent ${result.stopReason || 'failed'}: ${getResultOutput(result)}`,
+        )
       }
       return {
         content: [

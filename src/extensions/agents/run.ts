@@ -33,6 +33,7 @@ import {
   ModelRuntime,
   resolveCliModel,
   SessionManager,
+  SettingsManager,
 } from '@earendil-works/pi-coding-agent'
 import { emptyResult, getFinalOutput } from './result.ts'
 import { substituteTemplateArgs } from './prompts.ts'
@@ -48,7 +49,15 @@ import type { AgentConfig, OnUpdateCallback, SingleResult } from './types.ts'
 let sharedRuntimePromise: Promise<ModelRuntime> | undefined
 
 function getSharedModelRuntime(): Promise<ModelRuntime> {
-  sharedRuntimePromise ??= ModelRuntime.create({ refreshOnCreate: false })
+  sharedRuntimePromise ??= ModelRuntime.create({
+    refreshOnCreate: false,
+  }).catch((error) => {
+    // Don't cache a rejected promise: a transient failure (e.g. a malformed
+    // auth.json) must not poison every later subagent call for the process
+    // lifetime.
+    sharedRuntimePromise = undefined
+    throw error
+  })
   return sharedRuntimePromise
 }
 
@@ -61,15 +70,24 @@ function getSharedModelRuntime(): Promise<ModelRuntime> {
  * APPEND_SYSTEM.md. The agent's system prompt (with $1/$@ placeholders
  * filled from the task) replaces the base system prompt; `buildSystemPrompt`
  * still appends project context, skills, and the cwd footer.
+ *
+ * The parent's project-trust decision is threaded through: an untrusted
+ * project's `.pi/extensions` (arbitrary code), packages, skills and prompt
+ * templates must not be discovered and executed in-process. A directory the
+ * parent has no decision about is treated as untrusted.
  */
 function createSubagentResourceLoader(
   agent: AgentConfig,
   task: string,
   cwd: string,
+  projectTrusted: boolean,
 ): DefaultResourceLoader {
   return new DefaultResourceLoader({
     cwd,
     agentDir: getAgentDir(),
+    settingsManager: SettingsManager.create(cwd, getAgentDir(), {
+      projectTrusted,
+    }),
     systemPromptOverride: () =>
       substituteTemplateArgs(agent.systemPrompt, task),
   })
@@ -79,10 +97,13 @@ export interface RunSingleAgentOptions {
   agents: AgentConfig[]
   agentName: string
   task: string
-  /** Directory used when no explicit `cwd` is given. */
-  defaultCwd: string
   /** Working directory for the subagent session. */
-  cwd?: string
+  cwd: string
+  /**
+   * Whether the subagent's working directory is trusted: the parent's own
+   * decision when running in the parent's directory, false otherwise.
+   */
+  projectTrusted: boolean
   signal?: AbortSignal
   onUpdate?: OnUpdateCallback
   /** Parent session's active model (inherited when the agent has none). */
@@ -98,8 +119,8 @@ export async function runSingleAgent(
     agents,
     agentName,
     task,
-    defaultCwd,
     cwd,
+    projectTrusted,
     signal,
     onUpdate,
     parentModel,
@@ -117,13 +138,11 @@ export async function runSingleAgent(
     })
   }
 
-  const effectiveCwd = cwd ?? defaultCwd
-
   const currentResult: SingleResult = emptyResult({
     agent: agentName,
     task,
     agentSource: agent.source,
-    cwd: effectiveCwd,
+    cwd,
     model: agent.model,
   })
 
@@ -169,7 +188,12 @@ export async function runSingleAgent(
     thinkingLevel = parentThinkingLevel
   }
 
-  const resourceLoader = createSubagentResourceLoader(agent, task, effectiveCwd)
+  const resourceLoader = createSubagentResourceLoader(
+    agent,
+    task,
+    cwd,
+    projectTrusted,
+  )
   // Full discovery (extensions, skills, prompts, packages, context files) —
   // the same work a spawned `pi` process does at startup.
   await resourceLoader.reload()
@@ -178,13 +202,13 @@ export async function runSingleAgent(
   let removeAbortListener: (() => void) | undefined
   try {
     const created = await createAgentSession({
-      cwd: effectiveCwd,
+      cwd,
       agentDir: getAgentDir(),
       model,
       thinkingLevel,
       modelRuntime,
       resourceLoader,
-      sessionManager: SessionManager.inMemory(effectiveCwd),
+      sessionManager: SessionManager.inMemory(cwd),
       // Allowlist from the agent file (e.g. "read, grep, find, ls"); when
       // omitted the default built-ins (read, bash, edit, write) are used.
       tools: agent.tools,

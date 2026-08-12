@@ -21,6 +21,7 @@
 
 import * as fs from 'node:fs'
 import * as path from 'node:path'
+import { LRUCache } from 'lru-cache'
 import {
   CONFIG_DIR_NAME,
   getAgentDir,
@@ -28,6 +29,16 @@ import {
 } from '@earendil-works/pi-coding-agent'
 import { discoverPromptTemplateAgents } from './prompts.ts'
 import type { AgentConfig, AgentSource } from './types.ts'
+
+/**
+ * LRU cache of discovered agents, keyed by `${cwd}\0${agentDir}\0${trust}`.
+ * Discovery runs on every tool execution, so entries expire quickly; LRU
+ * eviction keeps stale project dirs from accumulating.
+ */
+const agentCache = new LRUCache<string, AgentConfig[]>({
+  max: 100,
+  ttl: 10_000,
+})
 
 function loadAgentsFromDir(options: {
   dir: string
@@ -52,6 +63,10 @@ function loadAgentsFromDir(options: {
     if (!entry.isFile() && !entry.isSymbolicLink()) continue
 
     const filePath = path.join(dir, entry.name)
+
+    // One malformed agent file must not break discovery for every agent, so
+    // read + frontmatter parse + field extraction are guarded per file and
+    // bad files are skipped.
     let content: string
     try {
       content = fs.readFileSync(filePath, 'utf-8')
@@ -59,23 +74,41 @@ function loadAgentsFromDir(options: {
       continue
     }
 
-    const { frontmatter, body } =
-      parseFrontmatter<Record<string, string>>(content)
-
-    if (!frontmatter.name || !frontmatter.description) {
+    let frontmatter: Record<string, unknown>
+    let body: string
+    try {
+      const parsed = parseFrontmatter<Record<string, unknown>>(content)
+      frontmatter = parsed.frontmatter
+      body = parsed.body
+    } catch {
+      // Malformed YAML frontmatter.
       continue
     }
 
-    const tools = frontmatter.tools
-      ?.split(',')
-      .map((t: string) => t.trim())
-      .filter(Boolean)
+    const name =
+      typeof frontmatter.name === 'string' ? frontmatter.name.trim() : ''
+    const description =
+      typeof frontmatter.description === 'string'
+        ? frontmatter.description.trim()
+        : ''
+    if (!name || !description) continue
+
+    // `tools` must be a comma-separated string; YAML lists or numbers crash
+    // `.split()`, so anything non-string is treated as "no allowlist".
+    const tools =
+      typeof frontmatter.tools === 'string'
+        ? frontmatter.tools
+            .split(',')
+            .map((t) => t.trim())
+            .filter(Boolean)
+        : undefined
 
     agents.push({
-      name: frontmatter.name,
-      description: frontmatter.description,
+      name,
+      description,
       tools: tools && tools.length > 0 ? tools : undefined,
-      model: frontmatter.model,
+      model:
+        typeof frontmatter.model === 'string' ? frontmatter.model : undefined,
       systemPrompt: body,
       source,
       filePath,
@@ -105,15 +138,25 @@ function findNearestProjectAgentsDir(cwd: string): string | null {
   }
 }
 
-export async function discoverAgents(cwd: string): Promise<AgentConfig[]> {
-  const userDir = path.join(getAgentDir(), 'agents')
+export async function discoverAgents(
+  cwd: string,
+  projectTrusted: boolean,
+): Promise<AgentConfig[]> {
+  const agentDir = getAgentDir()
+  const key = `${cwd}\0${agentDir}\0${projectTrusted ? '1' : '0'}`
+  const cached = agentCache.get(key)
+  if (cached) return cached
+
+  const userDir = path.join(agentDir, 'agents')
   const projectAgentsDir = findNearestProjectAgentsDir(cwd)
 
-  const promptAgents = await discoverPromptTemplateAgents(cwd)
+  const promptAgents = await discoverPromptTemplateAgents(cwd, projectTrusted)
   const userAgents = loadAgentsFromDir({ dir: userDir, source: 'user' })
-  const projectAgents = projectAgentsDir
-    ? loadAgentsFromDir({ dir: projectAgentsDir, source: 'project' })
-    : []
+  // An untrusted project's agent files are not loaded at all.
+  const projectAgents =
+    projectTrusted && projectAgentsDir
+      ? loadAgentsFromDir({ dir: projectAgentsDir, source: 'project' })
+      : []
 
   // Prompt templates first; agent files override on name conflicts.
   const agentMap = new Map<string, AgentConfig>()
@@ -121,5 +164,7 @@ export async function discoverAgents(cwd: string): Promise<AgentConfig[]> {
   for (const agent of userAgents) agentMap.set(agent.name, agent)
   for (const agent of projectAgents) agentMap.set(agent.name, agent)
 
-  return Array.from(agentMap.values())
+  const agents = Array.from(agentMap.values())
+  agentCache.set(key, agents)
+  return agents
 }
