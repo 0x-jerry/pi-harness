@@ -2,6 +2,10 @@
   "name": "@0x-jerry/pi-package",
   "version": "0.1.0",
   "description": "My personalized pi package: extensions, skills, prompts, and themes",
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org",
+    "access": "public"
+  },
   "keywords": [
     "pi-package"
   ],
