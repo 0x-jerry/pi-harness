@@ -271,26 +271,37 @@ describe('ask dialog interaction', () => {
     )
   })
 
-  test('batch: ← back to a question answered with a custom answer restores the editor', async () => {
-    const result = await run(batchParams, {
-      // q1: custom answer "first draft"; advance; ← back; the editor is
-      // restored with the previous text; submit it unchanged, then finish q2.
-      inputs: [
-        '\x1b[B',
-        '\x1b[B',
-        '\r',
-        'first draft',
-        '\r',
-        '\x1b[D',
-        '\r',
-        '1',
-        '\r',
-      ],
-    })
-
-    expect(result.details.cancelled).toBe(false)
+  test('batch: ← back to a custom-answered question shows the option list with the custom content', async () => {
+    const ctx: any = {
+      mode: 'tui',
+      ui: {
+        custom: (factory: any) =>
+          new Promise((resolve) => {
+            const comp = factory(stubTui, stubTheme(), {}, resolve)
+            // q1: custom answer "my choice" → advance to q2
+            comp.handleInput('\x1b[B')
+            comp.handleInput('\x1b[B')
+            comp.handleInput('\r')
+            comp.handleInput('my choice')
+            comp.handleInput('\r')
+            // ← back to q1: the option list is shown (no inline editor),
+            // with the custom content replacing the custom option label
+            comp.handleInput('\x1b[D')
+            const lines = comp.render(80)
+            expect(lines.join('')).toContain('✎ my choice')
+            expect(lines.join('')).not.toContain('Your answer:')
+            // Enter on the custom entry re-opens the editor; edit and resubmit
+            comp.handleInput('\r')
+            comp.handleInput('!')
+            comp.handleInput('\r') // submit revised → advance to q2
+            comp.handleInput('\r') // q2: option x
+            comp.handleInput('\r') // review: submit
+          }),
+      },
+    }
+    const result = await tool.execute('call-5', batchParams, undefined, undefined, ctx)
     const [first, second] = result.details.items
-    expect(first!.answer).toBe('first draft')
+    expect(first!.answer).toBe('my choice!')
     expect(first!.custom).toBe(true)
     expect(second!.answer).toBe('x')
     expect(second!.custom).toBe(false)
@@ -411,9 +422,9 @@ describe('ask dialog interaction', () => {
             comp.handleInput('\r')
             comp.handleInput('my choice')
             comp.handleInput('\r') // submit → advance to q2
-            // ← back to q1: editor is restored; Esc to see the option list
+            // ← back to q1: the option list is shown directly with the
+            // custom content replacing the custom option label
             comp.handleInput('\x1b[D')
-            comp.handleInput('\x1b')
             const lines = comp.render(80)
             expect(lines.join('')).toContain('✎ my choice')
             expect(lines.join('')).not.toContain('Type a custom answer')

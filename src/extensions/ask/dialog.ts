@@ -128,16 +128,10 @@ export function createAskDialog(items: AskItem[]) {
       refresh()
     }
 
-    /** Move to a question, restoring its editor/options state. */
+    /** Move to a question, showing its option list (custom entry selected when answered). */
     function goToQuestion(newIndex: number) {
       index = newIndex
-      if (customAnswers[index] != null) {
-        editMode = true
-        editor.setText(customAnswers[index] ?? '')
-        refresh()
-      } else {
-        showOptions()
-      }
+      showOptions()
     }
 
     /** Leave the editor and show the current question's (rebuilt) options. */
