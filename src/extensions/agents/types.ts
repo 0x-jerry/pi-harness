@@ -31,6 +31,12 @@ export interface SingleResult {
   task: string
   /** Working directory the subagent ran in (for rendering tool paths). */
   cwd?: string
+  /**
+   * Final system prompt the subagent ran with: the agent's prompt with
+   * $1/$@ placeholders filled from the task, plus project context, skills,
+   * APPEND_SYSTEM.md and the cwd footer (what the model actually saw).
+   */
+  systemPrompt?: string
   exitCode: number
   messages: Message[]
   stderr: string

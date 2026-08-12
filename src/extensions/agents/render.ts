@@ -74,6 +74,16 @@ function formatUsageStats(
   return parts.join(' ')
 }
 
+/**
+ * One-line preview of the system prompt for the collapsed view: the first
+ * non-empty line, truncated.
+ */
+function systemPromptPreview(prompt: string): string {
+  const firstLine = prompt.split('\n').find((line) => line.trim()) ?? ''
+  if (firstLine.length <= 72) return firstLine
+  return `${firstLine.slice(0, 69)}...`
+}
+
 function userMessageText(message: UserMessage): string {
   if (typeof message.content === 'string') return message.content
   return message.content
@@ -202,6 +212,11 @@ export function renderSubagentResult(
     )
 
   if (expanded) {
+    if (r.systemPrompt) {
+      container.addChild(new Spacer(1))
+      container.addChild(new Text(theme.fg('muted', '─── System prompt ───'), 0, 0))
+      container.addChild(new Text(r.systemPrompt, 0, 0))
+    }
     container.addChild(new Spacer(1))
     container.addChild(new Text(theme.fg('muted', '─── Transcript ───'), 0, 0))
     const transcript = renderTranscript({
@@ -216,6 +231,18 @@ export function renderSubagentResult(
       for (const component of transcript) container.addChild(component)
     }
   } else {
+    if (r.systemPrompt) {
+      container.addChild(
+        new Text(
+          theme.fg(
+            'muted',
+            `system prompt: ${systemPromptPreview(r.systemPrompt)}`,
+          ),
+          0,
+          0,
+        ),
+      )
+    }
     const skipped = Math.max(0, r.messages.length - COLLAPSED_MESSAGE_COUNT)
     if (skipped > 0)
       container.addChild(

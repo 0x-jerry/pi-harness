@@ -216,6 +216,11 @@ export async function runSingleAgent(
     session = created.session
     const runSession = session
 
+    // Capture the exact system prompt the subagent runs with (task
+    // substituted, context files/skills/APPEND_SYSTEM.md appended) so the
+    // TUI can display it in the result.
+    currentResult.systemPrompt = session.systemPrompt
+
     // Forward subagent messages to the parent session, mirroring the JSON
     // event stream the spawned-process approach parsed.
     runSession.subscribe((event) => {
