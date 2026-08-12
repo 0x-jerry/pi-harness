@@ -26,7 +26,11 @@ import {
 } from '@earendil-works/pi-coding-agent'
 import type { AgentConfig, AgentSource } from './types.ts'
 
-function loadAgentsFromDir(dir: string, source: AgentSource): AgentConfig[] {
+function loadAgentsFromDir(options: {
+  dir: string
+  source: AgentSource
+}): AgentConfig[] {
+  const { dir, source } = options
   const agents: AgentConfig[] = []
 
   if (!fs.existsSync(dir)) {
@@ -102,9 +106,9 @@ export function discoverAgents(cwd: string): AgentConfig[] {
   const userDir = path.join(getAgentDir(), 'agents')
   const projectAgentsDir = findNearestProjectAgentsDir(cwd)
 
-  const userAgents = loadAgentsFromDir(userDir, 'user')
+  const userAgents = loadAgentsFromDir({ dir: userDir, source: 'user' })
   const projectAgents = projectAgentsDir
-    ? loadAgentsFromDir(projectAgentsDir, 'project')
+    ? loadAgentsFromDir({ dir: projectAgentsDir, source: 'project' })
     : []
 
   // User agents first; project agents override on name conflicts.

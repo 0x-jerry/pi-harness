@@ -14,10 +14,9 @@ export function emptyUsage(): UsageStats {
 }
 
 export function emptyResult(
-  agent: string,
-  task: string,
-  overrides: Partial<SingleResult> = {},
+  options: { agent: string; task: string } & Partial<SingleResult>,
 ): SingleResult {
+  const { agent, task, ...overrides } = options
   return {
     agent,
     agentSource: 'unknown',

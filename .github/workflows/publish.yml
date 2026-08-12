@@ -1,0 +1,13 @@
+name: Publish
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  publish:
+    uses: 0x-jerry/workflows/.github/workflows/publish.yml@main
+    permissions:
+      id-token: write
+      contents: read

@@ -44,16 +44,16 @@ export default function (pi: ExtensionAPI) {
         ? `${ctx.model.provider}/${ctx.model.id}`
         : undefined
 
-      const result = await runSingleAgent(
-        ctx.cwd,
+      const result = await runSingleAgent({
         agents,
-        params.agent,
-        params.task,
-        params.cwd,
+        agentName: params.agent,
+        task: params.task,
+        defaultCwd: ctx.cwd,
+        cwd: params.cwd,
         signal,
         onUpdate,
         parentModel,
-      )
+      })
       const isError = isFailedResult(result)
       if (isError) {
         const errorMsg = getResultOutput(result)
