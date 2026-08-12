@@ -12,6 +12,10 @@
  *       { question: "q2", options: ["x", "y", "z"] },
  *     ]
  *   }
+ *
+ * Keyboard: ↑↓/1-9 pick options, Enter selects, ←/→ moves between questions,
+ * Esc cancels. After the last question a review step asks for confirmation
+ * before the answers are submitted.
  */
 
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent'
@@ -26,6 +30,7 @@ export default function (pi: ExtensionAPI) {
     description: [
       'Ask the user one or more questions and let them pick from the provided options, or type a custom answer when none fit.',
       'Pass `questions` as an array of { question, description?, options } items; each question is answered one at a time in a single dialog with its own options list.',
+      'If the user cancels the dialog, the tool fails with an error — treat that as "the user declined to answer".',
       'Use this when you need a decision, preference, or choice that only the user can make, instead of guessing or assuming.',
     ].join(' '),
     promptSnippet:

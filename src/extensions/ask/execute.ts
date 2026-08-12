@@ -70,24 +70,29 @@ function buildResultContent(
     .join('\n')
 
   if (cancelled) {
-    return items.length > 1
-      ? `User cancelled at question ${(cancelledAt ?? 0) + 1} of ${items.length}.\n${pairs}`
+    if (items.length > 1) {
+      return `User cancelled at question ${(cancelledAt ?? 0) + 1} of ${items.length}.\n${pairs}`
+    }
+    const single = itemDetails[0]
+    return single?.answer != null
+      ? `User cancelled: ${items[0]?.question} (answer: ${single.answer})`
       : `User cancelled: ${items[0]?.question}`
   }
   if (items.length > 1) {
     return `User answered all ${items.length} questions:\n${pairs}`
   }
   const single = itemDetails[0]
-  return single?.custom
-    ? `User answered: ${single.answer}`
-    : `User selected: ${single?.answer}`
+  if (single?.custom) return `User answered: ${single.answer}`
+  if (single?.answer != null) return `User selected: ${single.answer}`
+  return `User answered: (no answer)`
 }
 
 /**
  * Validate the arguments and run the ask flow.
  *
  * Non-interactive modes and malformed input return an error result instead
- * of blocking; otherwise the interactive dialog runs and its outcome is
+ * of blocking; otherwise the interactive dialog runs. User cancellation
+ * throws, which marks the tool call as failed. A completed dialog is
  * assembled into `AskDetails`.
  */
 export async function executeAsk(
@@ -122,25 +127,30 @@ export async function executeAsk(
     createAskDialog(items),
   )
 
+  // The dialog never reports null on its own, but a disposed/aborted custom
+  // UI can resolve without a payload — treat that as a cancellation.
   if (!dialogResult) {
-    return result(
-      'User cancelled the question.',
-      { items: blankItemDetails(items), cancelled: true, cancelledAt: 0 },
-    )
+    throw new Error('User cancelled the question.')
   }
 
   const itemDetails = buildItemDetails(items, dialogResult)
+
+  if (dialogResult.cancelled) {
+    throw new Error(
+      buildResultContent(
+        items,
+        itemDetails,
+        dialogResult.cancelled,
+        dialogResult.cancelledAt,
+      ),
+    )
+  }
+
   return result(
-    buildResultContent(
-      items,
-      itemDetails,
-      dialogResult.cancelled,
-      dialogResult.cancelledAt,
-    ),
+    buildResultContent(items, itemDetails, false),
     {
       items: itemDetails,
-      cancelled: dialogResult.cancelled,
-      cancelledAt: dialogResult.cancelledAt,
+      cancelled: false,
     },
   )
 }

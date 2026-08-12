@@ -3,10 +3,16 @@
  *
  * Walks through the questions one at a time. Each question renders its
  * options in a SelectList with a trailing "✎ Type a custom answer…" choice
- * that opens an inline Editor when none of the options fit. Arrow keys
- * navigate, number keys 1-9 jump to an option, Enter selects (and advances
- * in a batch), Ctrl+P goes back, Esc cancels (or leaves the editor back to
- * the options). Per-question selections are reported through `done`.
+ * that opens an inline Editor when none of the options fit.
+ *
+ * Navigation: arrow keys move within the options, number keys 1-9 jump to an
+ * option, Enter selects, ← goes to the previous question, → goes to the
+ * next question (past the last one opens the review step), and Esc cancels
+ * (or leaves the editor back to the options).
+ *
+ * After the last question is answered the dialog moves to a review step that
+ * lists every question with its answer and offers Submit / Edit answers
+ * (Esc there cancels the whole flow). Selections are reported through `done`.
  */
 
 import type { Theme } from '@earendil-works/pi-coding-agent'
@@ -30,6 +36,10 @@ import type { AskItem } from './schema.ts'
 /** Marker value for the trailing "type a custom answer" option. */
 const CUSTOM_VALUE = 'custom'
 
+/** Marker values for the review step's action list. */
+const ACTION_SUBMIT = 'submit'
+const ACTION_EDIT = 'edit'
+
 /** Payload reported by the dialog when it completes or is cancelled. */
 export interface AskDialogResult {
   /** Selected option index per question; null for custom/unanswered items. */
@@ -38,6 +48,28 @@ export interface AskDialogResult {
   customAnswers: (string | null)[]
   cancelled: boolean
   cancelledAt?: number
+}
+
+/** Shared SelectList theme for both the options and the review action list. */
+function selectListTheme(theme: Theme) {
+  return {
+    selectedPrefix: (t: string) => theme.fg('accent', t),
+    selectedText: (t: string) => theme.fg('accent', t),
+    description: (t: string) => theme.fg('muted', t),
+    scrollInfo: (t: string) => theme.fg('dim', t),
+    noMatch: (t: string) => theme.fg('warning', t),
+  }
+}
+
+/** One-line answer summary for the review step. */
+function answerSummary(
+  item: AskItem,
+  optIndex: number | null,
+  custom: string | null,
+): string {
+  if (custom != null) return `✎ ${custom}`
+  if (optIndex != null) return (item.options[optIndex] ?? '(no answer)')
+  return '(no answer)'
 }
 
 /**
@@ -62,21 +94,50 @@ export function createAskDialog(items: AskItem[]) {
     const customAnswers: (string | null)[] = items.map(() => null)
     let index = 0
     let editMode = false
+    let confirmMode = false
     let selectList: SelectList
+    let confirmList: SelectList
 
-    const selectListTheme = {
-      selectedPrefix: (t: string) => theme.fg('accent', t),
-      selectedText: (t: string) => theme.fg('accent', t),
-      description: (t: string) => theme.fg('muted', t),
-      scrollInfo: (t: string) => theme.fg('dim', t),
-      noMatch: (t: string) => theme.fg('warning', t),
-    }
-
+    const themeList = selectListTheme(theme)
     const editorTheme: EditorTheme = {
       borderColor: (s) => theme.fg('accent', s),
-      selectList: selectListTheme,
+      selectList: themeList,
     }
     const editor = new Editor(tui, editorTheme)
+
+    /** Record the current question's answer, then advance or open the review. */
+    function afterAnswer() {
+      if (index === total - 1) {
+        openConfirm()
+        return
+      }
+      index++
+      editMode = false
+      makeSelectList()
+      refresh()
+    }
+
+    /** Open the review step with the Submit action pre-selected. */
+    function openConfirm() {
+      confirmMode = true
+      confirmList.setSelectedIndex(0)
+      refresh()
+    }
+
+    /** Move to a question, restoring its editor/options state. */
+    function goToQuestion(newIndex: number) {
+      index = newIndex
+      if (customAnswers[index] != null) {
+        editMode = true
+        editor.setText(customAnswers[index] ?? '')
+      } else {
+        editMode = false
+        makeSelectList()
+        selectList.setSelectedIndex(selected[index] ?? 0)
+      }
+      refresh()
+    }
+
     editor.onSubmit = (value) => {
       const trimmed = value.trim()
       if (!trimmed) {
@@ -86,14 +147,7 @@ export function createAskDialog(items: AskItem[]) {
       }
       customAnswers[index] = trimmed
       selected[index] = null
-      if (index === total - 1) {
-        done({ selected, customAnswers, cancelled: false })
-        return
-      }
-      index++
-      editMode = false
-      makeSelectList()
-      refresh()
+      afterAnswer()
     }
 
     /** (Re)build the option list for the current question. */
@@ -109,7 +163,7 @@ export function createAskDialog(items: AskItem[]) {
       selectList = new SelectList(
         numberedItems,
         Math.min(numberedItems.length, 10),
-        selectListTheme,
+        themeList,
       )
       selectList.onSelect = (it) => {
         if (it.value === CUSTOM_VALUE) {
@@ -120,19 +174,35 @@ export function createAskDialog(items: AskItem[]) {
         }
         selected[index] = Number(it.value)
         customAnswers[index] = null
-        if (index === total - 1) {
-          done({ selected, customAnswers, cancelled: false })
-          return
-        }
-        index++
-        editMode = false
-        makeSelectList()
-        refresh()
+        afterAnswer()
       }
       selectList.onCancel = () =>
         done({ selected, customAnswers, cancelled: true, cancelledAt: index })
     }
     makeSelectList()
+
+    /** (Re)build the review step's action list. */
+    function makeConfirmList() {
+      confirmList = new SelectList(
+        [
+          { value: ACTION_SUBMIT, label: '✓ Submit answers' },
+          { value: ACTION_EDIT, label: '← Edit answers' },
+        ],
+        2,
+        themeList,
+      )
+      confirmList.onSelect = (it) => {
+        if (it.value === ACTION_SUBMIT) {
+          done({ selected, customAnswers, cancelled: false })
+          return
+        }
+        confirmMode = false
+        goToQuestion(total - 1)
+      }
+      confirmList.onCancel = () =>
+        done({ selected, customAnswers, cancelled: true, cancelledAt: total - 1 })
+    }
+    makeConfirmList()
 
     function refresh() {
       cachedLines = undefined
@@ -140,6 +210,13 @@ export function createAskDialog(items: AskItem[]) {
     }
 
     function handleInput(data: string) {
+      // Review step: submit, edit answers, or cancel.
+      if (confirmMode) {
+        confirmList.handleInput(data)
+        refresh()
+        return
+      }
+
       // Editor mode: type the custom answer; Esc returns to options.
       if (editMode) {
         if (matchesKey(data, Key.escape)) {
@@ -162,30 +239,26 @@ export function createAskDialog(items: AskItem[]) {
         if (n <= current.options.length) {
           selected[index] = n - 1
           customAnswers[index] = null
-          if (index === total - 1) {
-            done({ selected, customAnswers, cancelled: false })
-          } else {
-            index++
-            editMode = false
-            makeSelectList()
-            refresh()
-          }
+          afterAnswer()
           return
         }
       }
-      if (matchesKey(data, Key.ctrl('p')) && index > 0) {
-        index--
-        if (customAnswers[index] != null) {
-          editMode = true
-          editor.setText(customAnswers[index] ?? '')
-        } else {
-          editMode = false
-          makeSelectList()
-          selectList.setSelectedIndex(selected[index] ?? 0)
-        }
-        refresh()
+
+      // ←: previous question (only before the first).
+      if (matchesKey(data, Key.left)) {
+        if (index > 0) goToQuestion(index - 1)
         return
       }
+      // →: next question; past the last one opens the review step.
+      if (matchesKey(data, Key.right)) {
+        if (index === total - 1) {
+          openConfirm()
+        } else {
+          goToQuestion(index + 1)
+        }
+        return
+      }
+
       selectList.handleInput(data)
       refresh()
     }
@@ -195,7 +268,6 @@ export function createAskDialog(items: AskItem[]) {
 
       const lines: string[] = []
       const renderWidth = Math.max(1, width)
-      const current = items[index]!
 
       function addWrapped(text: string) {
         lines.push(...wrapTextWithAnsi(text, renderWidth))
@@ -215,39 +287,65 @@ export function createAskDialog(items: AskItem[]) {
       }
 
       lines.push(theme.fg('accent', '─'.repeat(renderWidth)))
-      const header = isBatch
-        ? `${index + 1}/${total}  ${current.question}`
-        : current.question
-      addWrappedWithPrefix(' ', theme.fg('text', header))
-      if (current.description) {
+
+      if (confirmMode) {
+        addWrappedWithPrefix(' ', theme.fg('text', 'Review your answers'))
         lines.push('')
-        addWrappedWithPrefix(' ', theme.fg('muted', current.description))
-      }
-      lines.push('')
-
-      if (editMode) {
-        addWrappedWithPrefix(' ', theme.fg('dim', 'Your answer:'))
-        for (const line of editor.render(Math.max(1, renderWidth - 2))) {
+        items.forEach((item, i) => {
+          const summary = answerSummary(
+            item,
+            selected[i] ?? null,
+            customAnswers[i] ?? null,
+          )
+          const color = summary === '(no answer)' ? 'muted' : 'text'
+          addWrappedWithPrefix(' ', theme.fg(color, `${i + 1}. ${item.question} → ${summary}`))
+        })
+        lines.push('')
+        for (const line of confirmList.render(Math.max(1, renderWidth - 2))) {
           lines.push(` ${line}`)
         }
+        lines.push('')
+        addWrappedWithPrefix(
+          ' ',
+          theme.fg('dim', '↑↓ navigate • Enter select • Esc cancel'),
+        )
       } else {
-        for (const line of selectList.render(Math.max(1, renderWidth - 2))) {
-          lines.push(` ${line}`)
+        const current = items[index]!
+        const header = isBatch
+          ? `${index + 1}/${total}  ${current.question}`
+          : current.question
+        addWrappedWithPrefix(' ', theme.fg('text', header))
+        if (current.description) {
+          lines.push('')
+          addWrappedWithPrefix(' ', theme.fg('muted', current.description))
         }
+        lines.push('')
+
+        if (editMode) {
+          addWrappedWithPrefix(' ', theme.fg('dim', 'Your answer:'))
+          for (const line of editor.render(Math.max(1, renderWidth - 2))) {
+            lines.push(` ${line}`)
+          }
+        } else {
+          for (const line of selectList.render(Math.max(1, renderWidth - 2))) {
+            lines.push(` ${line}`)
+          }
+        }
+
+        lines.push('')
+        const hints = editMode
+          ? ['Enter to submit', 'Esc back to options']
+          : [
+              '↑↓ navigate',
+              '1-9 jump',
+              'Enter select',
+              '✎ custom answer',
+              '← → questions',
+              'Esc cancel',
+            ]
+        addWrappedWithPrefix(' ', theme.fg('dim', hints.join(' • ')))
       }
 
-      lines.push('')
-      const hints = editMode
-        ? ['Enter to submit', 'Esc back to options']
-        : [
-            '↑↓ navigate',
-            '1-9 jump',
-            'Enter select',
-            '✎ custom answer',
-            ...(isBatch && index > 0 ? ['Ctrl+P previous'] : []),
-            'Esc cancel',
-          ]
-      addWrappedWithPrefix(' ', theme.fg('dim', hints.join(' • ')))
       lines.push(theme.fg('accent', '─'.repeat(renderWidth)))
 
       cachedLines = lines
