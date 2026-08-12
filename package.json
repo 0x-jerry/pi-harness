@@ -2,6 +2,16 @@
   "name": "@0x-jerry/pi-package",
   "version": "0.2.0",
   "description": "My personalized pi package: extensions, skills, prompts, and themes",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/0x-jerry/pi-package.git"
+  },
+  "author": "",
+  "type": "module",
+  "bugs": {
+    "url": "https://github.com/0x-jerry/pi-package/issues"
+  },
+  "homepage": "https://github.com/0x-jerry/pi-package#readme",
   "publishConfig": {
     "registry": "https://registry.npmjs.org",
     "access": "public"
