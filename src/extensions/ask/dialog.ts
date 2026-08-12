@@ -32,6 +32,7 @@ import {
   SelectList,
   type TUI,
   type Component,
+  truncateToWidth,
   visibleWidth,
   wrapTextWithAnsi,
 } from '@earendil-works/pi-tui'
@@ -43,6 +44,12 @@ const CUSTOM_VALUE = 'custom'
 /** Marker values for the review step's action list. */
 const ACTION_SUBMIT = 'submit'
 const ACTION_EDIT = 'edit'
+
+/** Indent for the answer line in the review step. */
+const ANSWER_INDENT = '    '
+
+/** Maximum questions listed in the review step before collapsing. */
+const MAX_REVIEW_QUESTIONS = 10
 
 /** Payload reported by the dialog when it completes or is cancelled. */
 export interface AskDialogResult {
@@ -168,10 +175,11 @@ export function createAskDialog(items: AskItem[]) {
       const chosen = selected[index]
       const custom = customAnswers[index]
       const numberedItems: SelectItem[] = [
-        // Already-picked options are marked with a check mark.
+        // The picked option is marked with a check mark at the end via
+        // truncatePrimary (see layout below) so it survives truncation.
         ...item.options.map((opt, i) => ({
           value: `${i}`,
-          label: `${chosen === i ? '✓ ' : ''}${i + 1}. ${opt}`,
+          label: `${i + 1}. ${opt}`,
         })),
         // Once a custom answer exists, it replaces the prompt label; Enter
         // on it re-opens the editor to edit it.
@@ -185,6 +193,21 @@ export function createAskDialog(items: AskItem[]) {
         numberedItems,
         Math.min(numberedItems.length, 10),
         themeList,
+        {
+          // SelectList truncates labels from the end, which would cut off a
+          // trailing check mark; reserve room for it when the option is the
+          // one that was picked.
+          truncatePrimary: ({ text, maxWidth, item }) => {
+            const marked =
+              item.value !== CUSTOM_VALUE && chosen === Number(item.value)
+            const base = truncateToWidth(
+              text,
+              Math.max(1, maxWidth - (marked ? 2 : 0)),
+              '…',
+            )
+            return marked ? `${base} ✓` : base
+          },
+        },
       )
       selectList.onSelect = (it) => {
         if (it.value === CUSTOM_VALUE) {
@@ -311,15 +334,28 @@ export function createAskDialog(items: AskItem[]) {
       if (confirmMode) {
         addWrappedWithPrefix(' ', theme.fg('text', 'Review your answers'))
         lines.push('')
-        items.forEach((item, i) => {
+        for (let i = 0; i < items.length; i++) {
+          if (i === MAX_REVIEW_QUESTIONS) {
+            const remaining = items.length - i
+            addWrappedWithPrefix(
+              ' ',
+              theme.fg(
+                'dim',
+                `… and ${remaining} more question${remaining > 1 ? 's' : ''}`,
+              ),
+            )
+            break
+          }
+          const item = items[i]!
+          addWrappedWithPrefix(' ', theme.fg('text', `${i + 1}. ${item.question}`))
           const summary = answerSummary(
             item,
             selected[i] ?? null,
             customAnswers[i] ?? null,
           )
-          const color = summary === '(no answer)' ? 'muted' : 'text'
-          addWrappedWithPrefix(' ', theme.fg(color, `${i + 1}. ${item.question} → ${summary}`))
-        })
+          const color = summary === '(no answer)' ? 'muted' : 'accent'
+          addWrappedWithPrefix(ANSWER_INDENT, theme.fg(color, `A: ${summary}`))
+        }
         lines.push('')
         for (const line of confirmList.render(Math.max(1, renderWidth - 2))) {
           lines.push(` ${line}`)

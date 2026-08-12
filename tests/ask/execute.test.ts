@@ -395,8 +395,8 @@ describe('ask dialog interaction', () => {
             comp.handleInput('\r')
             comp.handleInput('\x1b[D')
             const lines = comp.render(80)
-            expect(lines.join('')).toContain('✓ 2. b')
-            expect(lines.join('')).not.toContain('✓ 1. a')
+            expect(lines.join('')).toContain('2. b ✓')
+            expect(lines.join('')).not.toContain('1. a ✓')
             // re-select option 2, answer q2, confirm
             comp.handleInput('\r')
             comp.handleInput('\r')
@@ -442,5 +442,69 @@ describe('ask dialog interaction', () => {
     expect(first!.answer).toBe('my choice!')
     expect(first!.custom).toBe(true)
     expect(second!.answer).toBe('x')
+  })
+
+  test('review step renders each answer on its own line below the question', async () => {
+    const ctx: any = {
+      mode: 'tui',
+      ui: {
+        custom: (factory: any) =>
+          new Promise((resolve) => {
+            const comp = factory(stubTui, stubTheme(), {}, resolve)
+            comp.handleInput('\x1b[B') // down → sqlite
+            comp.handleInput('\r') // select → review step
+            const lines = comp.render(80).map((l: string) => l.trimEnd())
+            const qIdx = lines.findIndex((l: string) => l.includes('Which DB?'))
+            const aIdx = lines.findIndex((l: string) => l.includes('A: sqlite'))
+            expect(qIdx).toBeGreaterThanOrEqual(0)
+            // wrap-tolerant: answer line comes after the question and is indented
+            expect(aIdx).toBeGreaterThan(qIdx)
+            expect(lines[aIdx]!.startsWith('    ')).toBe(true) // indented answer line
+            expect(lines[aIdx]!).toContain('A: sqlite')
+            comp.handleInput('\r') // review: submit
+          }),
+      },
+    }
+    await tool.execute('call-6', singleParams, undefined, undefined, ctx)
+  })
+
+  test('check mark survives truncation on long options', async () => {
+    const longParams: AskCallArgs = {
+      questions: [
+        {
+          question: 'q1',
+          options: [
+            'a very very long option that easily exceeds the primary column width in this test',
+          ],
+        },
+        { question: 'q2', options: ['x'] },
+      ],
+    }
+    const ctx: any = {
+      mode: 'tui',
+      ui: {
+        custom: (factory: any) =>
+          new Promise((resolve) => {
+            const comp = factory(stubTui, stubTheme(), {}, resolve)
+            comp.handleInput('\r') // q1: pick the only option → advance to q2
+            comp.handleInput('\x1b[D') // ← back to q1
+            // narrow width forces SelectList to truncate the long label
+            const lines = comp.render(40)
+            expect(lines.join('')).toContain('✓')
+            // finish: re-answer q1, answer q2, submit
+            comp.handleInput('\r')
+            comp.handleInput('\r')
+            comp.handleInput('\r')
+          }),
+      },
+    }
+    const result = await tool.execute(
+      'call-7',
+      longParams,
+      undefined,
+      undefined,
+      ctx,
+    )
+    expect(result.details.items[0]!.answer).toContain('very very long')
   })
 })
