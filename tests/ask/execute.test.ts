@@ -186,13 +186,14 @@ describe('ask dialog interaction', () => {
 
   test('escape cancels a single question and throws', async () => {
     await expect(run(singleParams, { inputs: ['\x1b'] })).rejects.toThrow(
-      'User cancelled: Which DB?',
+      'User cancelled the question.',
     )
   })
 
-  test('escape cancels a batch and throws with the partial answers', async () => {
+  test('escape cancels a batch and throws without returning any answers', async () => {
+    // answer q1 first, then cancel on q2 — no answers are reported
     await expect(run(batchParams, { inputs: ['1', '\x1b'] })).rejects.toThrow(
-      'User cancelled at question 2 of 2.\n1. q1 → a\n2. q2 → (no answer)',
+      'User cancelled the question.',
     )
   })
 
@@ -230,8 +231,8 @@ describe('ask dialog interaction', () => {
 
   test('custom answer: Esc leaves the editor back to options without losing the question', async () => {
     const result = await run(singleParams, {
-      // open editor, type partial text, Esc back to options (custom item is
-      // still selected), navigate up to an option and pick it
+      // open editor, type partial text, Esc back to options (the custom entry
+      // stays selected), navigate up to an option and pick it
       inputs: ['\x1b[B', '\x1b[B', '\r', 'partial', '\x1b', '\x1b[A', '\r', '\r'],
     })
 
@@ -364,9 +365,71 @@ describe('ask dialog interaction', () => {
     expect(item.custom).toBe(false)
   })
 
-  test('review step: Esc cancels and throws with the collected answer', async () => {
+  test('review step: Esc cancels and throws without any answers', async () => {
+    // answer the question, then cancel at the review step — nothing is returned
     await expect(run(singleParams, { inputs: ['\r', '\x1b'] })).rejects.toThrow(
-      'User cancelled: Which DB? (answer: postgres)',
+      'User cancelled the question.',
     )
+  })
+
+  test('picked options are marked with a check when returning to the question', async () => {
+    const ctx: any = {
+      mode: 'tui',
+      ui: {
+        custom: (factory: any) =>
+          new Promise((resolve) => {
+            const comp = factory(stubTui, stubTheme(), {}, resolve)
+            // q1: pick option 2 (b), advance to q2, then ← back to q1
+            comp.handleInput('\x1b[B')
+            comp.handleInput('\r')
+            comp.handleInput('\x1b[D')
+            const lines = comp.render(80)
+            expect(lines.join('')).toContain('✓ 2. b')
+            expect(lines.join('')).not.toContain('✓ 1. a')
+            // re-select option 2, answer q2, confirm
+            comp.handleInput('\r')
+            comp.handleInput('\r')
+            comp.handleInput('\r')
+          }),
+      },
+    }
+    const result = await tool.execute('call-3', batchParams, undefined, undefined, ctx)
+    expect(result.details.items[0]!.answer).toBe('b')
+    expect(result.details.items[1]!.answer).toBe('x')
+  })
+
+  test('custom answer replaces the option label and Enter re-opens the editor', async () => {
+    const ctx: any = {
+      mode: 'tui',
+      ui: {
+        custom: (factory: any) =>
+          new Promise((resolve) => {
+            const comp = factory(stubTui, stubTheme(), {}, resolve)
+            // q1: navigate to the custom option (2 options + custom), type an answer
+            comp.handleInput('\x1b[B')
+            comp.handleInput('\x1b[B')
+            comp.handleInput('\r')
+            comp.handleInput('my choice')
+            comp.handleInput('\r') // submit → advance to q2
+            // ← back to q1: editor is restored; Esc to see the option list
+            comp.handleInput('\x1b[D')
+            comp.handleInput('\x1b')
+            const lines = comp.render(80)
+            expect(lines.join('')).toContain('✎ my choice')
+            expect(lines.join('')).not.toContain('Type a custom answer')
+            // Enter on the custom entry re-opens the editor with the text; edit and resubmit
+            comp.handleInput('\r')
+            comp.handleInput('!')
+            comp.handleInput('\r') // submit revised custom answer → advance to q2
+            comp.handleInput('\r') // q2: option x
+            comp.handleInput('\r') // review: submit
+          }),
+      },
+    }
+    const result = await tool.execute('call-4', batchParams, undefined, undefined, ctx)
+    const [first, second] = result.details.items
+    expect(first!.answer).toBe('my choice!')
+    expect(first!.custom).toBe(true)
+    expect(second!.answer).toBe('x')
   })
 })

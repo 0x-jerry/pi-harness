@@ -10,6 +10,10 @@
  * next question (past the last one opens the review step), and Esc cancels
  * (or leaves the editor back to the options).
  *
+ * Already-picked options are marked with a check mark; a typed custom answer
+ * replaces the "✎ Type a custom answer…" entry and Enter re-opens it for
+ * editing.
+ *
  * After the last question is answered the dialog moves to a review step that
  * lists every question with its answer and offers Submit / Edit answers
  * (Esc there cancels the whole flow). Selections are reported through `done`.
@@ -130,11 +134,25 @@ export function createAskDialog(items: AskItem[]) {
       if (customAnswers[index] != null) {
         editMode = true
         editor.setText(customAnswers[index] ?? '')
+        refresh()
       } else {
-        editMode = false
-        makeSelectList()
-        selectList.setSelectedIndex(selected[index] ?? 0)
+        showOptions()
       }
+    }
+
+    /** Leave the editor and show the current question's (rebuilt) options. */
+    function showOptions(landOnCustom = false) {
+      editMode = false
+      makeSelectList()
+      // Land on the custom entry when leaving the editor or when an answer
+      // was typed there (so Enter re-opens the editor), otherwise restore
+      // the picked option.
+      const current = items[index]!
+      selectList.setSelectedIndex(
+        landOnCustom || customAnswers[index] != null
+          ? current.options.length
+          : (selected[index] ?? 0),
+      )
       refresh()
     }
 
@@ -153,12 +171,21 @@ export function createAskDialog(items: AskItem[]) {
     /** (Re)build the option list for the current question. */
     function makeSelectList() {
       const item = items[index]!
+      const chosen = selected[index]
+      const custom = customAnswers[index]
       const numberedItems: SelectItem[] = [
+        // Already-picked options are marked with a check mark.
         ...item.options.map((opt, i) => ({
           value: `${i}`,
-          label: `${i + 1}. ${opt}`,
+          label: `${chosen === i ? '✓ ' : ''}${i + 1}. ${opt}`,
         })),
-        { value: CUSTOM_VALUE, label: '✎ Type a custom answer…' },
+        // Once a custom answer exists, it replaces the prompt label; Enter
+        // on it re-opens the editor to edit it.
+        {
+          value: CUSTOM_VALUE,
+          label:
+            custom != null ? `✎ ${custom}` : '✎ Type a custom answer…',
+        },
       ]
       selectList = new SelectList(
         numberedItems,
@@ -220,8 +247,7 @@ export function createAskDialog(items: AskItem[]) {
       // Editor mode: type the custom answer; Esc returns to options.
       if (editMode) {
         if (matchesKey(data, Key.escape)) {
-          editMode = false
-          refresh()
+          showOptions(true)
           return
         }
         editor.handleInput(data)

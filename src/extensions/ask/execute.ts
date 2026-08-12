@@ -56,8 +56,6 @@ function buildItemDetails(
 function buildResultContent(
   items: AskItem[],
   itemDetails: AskItemDetails[],
-  cancelled: boolean,
-  cancelledAt?: number,
 ): string {
   const pairs = items
     .map((it, i) => {
@@ -69,15 +67,6 @@ function buildResultContent(
     })
     .join('\n')
 
-  if (cancelled) {
-    if (items.length > 1) {
-      return `User cancelled at question ${(cancelledAt ?? 0) + 1} of ${items.length}.\n${pairs}`
-    }
-    const single = itemDetails[0]
-    return single?.answer != null
-      ? `User cancelled: ${items[0]?.question} (answer: ${single.answer})`
-      : `User cancelled: ${items[0]?.question}`
-  }
   if (items.length > 1) {
     return `User answered all ${items.length} questions:\n${pairs}`
   }
@@ -129,28 +118,13 @@ export async function executeAsk(
 
   // The dialog never reports null on its own, but a disposed/aborted custom
   // UI can resolve without a payload — treat that as a cancellation.
-  if (!dialogResult) {
+  if (!dialogResult || dialogResult.cancelled) {
     throw new Error('User cancelled the question.')
   }
 
   const itemDetails = buildItemDetails(items, dialogResult)
-
-  if (dialogResult.cancelled) {
-    throw new Error(
-      buildResultContent(
-        items,
-        itemDetails,
-        dialogResult.cancelled,
-        dialogResult.cancelledAt,
-      ),
-    )
-  }
-
-  return result(
-    buildResultContent(items, itemDetails, false),
-    {
-      items: itemDetails,
-      cancelled: false,
-    },
-  )
+  return result(buildResultContent(items, itemDetails), {
+    items: itemDetails,
+    cancelled: false,
+  })
 }
