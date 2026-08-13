@@ -123,6 +123,12 @@ export function createSubagentsModal(tasks: SubagentTask[]) {
     let scrollTop = 0
     let contentLines: string[] = []
     let disposed = false
+    // Set by pi-tui whenever keyboard focus moves: `true` while this modal
+    // owns input, `false` after a background non-overlay custom UI (e.g. the
+    // ask dialog) steals focus. Used to divert keys back to the visible
+    // modal.
+    let component: Component & { dispose?(): void; focused: boolean } | undefined
+    let unsubscribe: (() => void) | undefined
 
     picker.onSelect = (item) => {
       const task = tasks[Number(item.value)]
@@ -141,6 +147,7 @@ export function createSubagentsModal(tasks: SubagentTask[]) {
     function dispose() {
       if (disposed) return
       disposed = true
+      unsubscribe?.()
       if (liveTimer) {
         clearInterval(liveTimer)
         liveTimer = undefined
@@ -256,14 +263,34 @@ export function createSubagentsModal(tasks: SubagentTask[]) {
       return cachedLines
     }
 
-    const component: Component & { dispose?(): void } = {
+    component = {
       render,
       invalidate: () => {
         cachedLines = undefined
       },
       handleInput,
       dispose,
+      focused: false,
     }
+
+    // While this modal is open, divert keyboard input back to it whenever
+    // pi-tui's focus was stolen by a background non-overlay UI — typically
+    // the ask dialog, which opens underneath this overlay and is invisible.
+    // pi-tui runs input listeners before dispatching to the focused
+    // component, so consuming the event here keeps the hidden dialog from
+    // ever seeing it and the modal stays fully navigable. When the modal
+    // itself is focused the listener stays out of the way to avoid
+    // double-handling.
+    unsubscribe = tui.addInputListener((data) => {
+      if (disposed || !component) return undefined
+      if (component.focused) return undefined
+      // Shift+Ctrl+D is pi's global debug key, checked after input
+      // listeners; let it through instead of swallowing it.
+      if (matchesKey(data, 'shift+ctrl+d')) return undefined
+      handleInput(data)
+      return { consume: true }
+    })
+
     return component
   }
 }

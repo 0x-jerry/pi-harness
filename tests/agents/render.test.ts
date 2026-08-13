@@ -72,12 +72,26 @@ function agentResult(result: SubAgentResult) {
   return { content: [], details: result }
 }
 
+type InputListener = (data: string) =>
+  | { consume?: boolean; data?: string }
+  | undefined
+
 /** Stub TUI for the modal: record redraws, give a fixed terminal size. */
 function stubTui() {
-  return {
+  const listeners: InputListener[] = []
+  const tui = {
     requestRender: vi.fn(),
     terminal: { rows: 40, columns: 120 },
-  } as unknown as TUI
+    addInputListener: (listener: InputListener) => {
+      listeners.push(listener)
+      return () => {
+        const i = listeners.indexOf(listener)
+        if (i !== -1) listeners.splice(i, 1)
+      }
+    },
+  } as unknown as TUI & { __listeners: InputListener[] }
+  tui.__listeners = listeners
+  return tui
 }
 
 function makeTask(
@@ -245,5 +259,70 @@ describe('createSubagentsModal', () => {
     expect(text).toContain('[error]')
     expect(text).toContain('Error: boom')
     comp.dispose?.()
+  })
+
+  test('diverts input back to the modal when focus was stolen', () => {
+    const tasks = [
+      makeTask('tc-running', 'running', 'reviewer', 'Review the diff'),
+      makeTask('tc-done', 'done', 'coder', 'Bump the version'),
+    ]
+    const tui = stubTui()
+    const comp = createSubagentsModal(tasks)(
+      tui,
+      theme,
+      undefined as any,
+      () => {},
+    ) as Component & { dispose?(): void; focused: boolean }
+
+    // Simulate pi-tui after a background UI (the ask dialog) stole focus:
+    // the modal no longer owns keyboard input.
+    comp.focused = false
+
+    const listener = tui.__listeners[0]!
+    const before = (comp as any).render(100).join('\n')
+    const result = listener('\x1b[B') // Key.down
+    const after = (comp as any).render(100).join('\n')
+
+    // The key was consumed so the hidden dialog never sees it…
+    expect(result).toEqual({ consume: true })
+    // …and the visible modal actually moved its selection.
+    expect(after).not.toBe(before)
+    comp.dispose?.()
+  })
+
+  test('does not intercept input while the modal is focused', () => {
+    const tasks = [makeTask('tc-done', 'done')]
+    const tui = stubTui()
+    const comp = createSubagentsModal(tasks)(
+      tui,
+      theme,
+      undefined as any,
+      () => {},
+    ) as Component & { dispose?(): void; focused: boolean }
+
+    comp.focused = true
+    const listener = tui.__listeners[0]!
+    const before = (comp as any).render(100).join('\n')
+    expect(listener('\x1b[B')).toBeUndefined()
+    expect((comp as any).render(100).join('\n')).toBe(before)
+    comp.dispose?.()
+  })
+
+  test('stops intercepting after dispose and unregisters the listener', () => {
+    const tasks = [makeTask('tc-done', 'done')]
+    const tui = stubTui()
+    const comp = createSubagentsModal(tasks)(
+      tui,
+      theme,
+      undefined as any,
+      () => {},
+    ) as Component & { dispose?(): void; focused: boolean }
+
+    comp.focused = false
+    const listener = tui.__listeners[0]!
+    comp.dispose?.()
+
+    expect(listener('\x1b[B')).toBeUndefined()
+    expect(tui.__listeners).toHaveLength(0)
   })
 })
