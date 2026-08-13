@@ -6,8 +6,11 @@
  * assistant text/thinking via `AssistantMessageComponent` (with the same
  * thinking styling, truncation notices, and stop-reason handling), and tool
  * calls paired with their results via `ToolExecutionComponent` (which uses
- * pi's built-in per-tool renderers). Collapsed view shows the tail of the
- * transcript with thinking collapsed to a label; Ctrl+O expands everything.
+ * pi's built-in per-tool renderers).
+ *
+ * Inline tool results always render the collapsed card (the tail of the
+ * transcript plus a usage line) — the full transcript is only ever shown in
+ * the `/subagents` modal via `renderFullResultContent`.
  */
 
 import type { AgentToolResult } from '@earendil-works/pi-agent-core'
@@ -29,7 +32,7 @@ import {
 } from '@earendil-works/pi-tui'
 import { isFailedResult } from './result.ts'
 import type { SubagentCallArgs } from './schema.ts'
-import type { SingleResult } from './types.ts'
+import type { SubAgentResult } from './types.ts'
 
 /** Messages shown in the collapsed result (tail of the transcript). */
 const COLLAPSED_MESSAGE_COUNT = 4
@@ -47,7 +50,7 @@ function formatTokens(count: number): string {
   return `${(count / 1000000).toFixed(1)}M`
 }
 
-function formatUsageStats(
+export function formatUsageStats(
   usage: {
     input: number
     output: number
@@ -100,6 +103,13 @@ interface TranscriptOptions {
   expanded: boolean
   /** Collapse thinking blocks to a single "Thinking…" label. */
   hideThinking: boolean
+  /**
+   * TUI for embedded tool executions to request redraws. Defaults to a
+   * no-op stub: static results (collapsed card, modal snapshots) never
+   * stream, so redraw requests are unnecessary there. The modal passes the
+   * real TUI so nested tool executions behave like the live chat.
+   */
+  tui?: TUI
 }
 
 /**
@@ -111,6 +121,7 @@ interface TranscriptOptions {
  */
 function renderTranscript(options: TranscriptOptions): Component[] {
   const { messages, cwd, expanded, hideThinking } = options
+  const tui = options.tui ?? STUB_TUI
   const mdTheme = getMarkdownTheme()
   const pendingTools = new Map<string, ToolExecutionComponent>()
   const components: Component[] = []
@@ -128,7 +139,7 @@ function renderTranscript(options: TranscriptOptions): Component[] {
           content.arguments,
           { showImages: false },
           undefined,
-          STUB_TUI,
+          tui,
           cwd,
         )
         toolComp.setExpanded(expanded)
@@ -185,12 +196,67 @@ export function renderSubagentCall(
   return new Text(text, 0, 0)
 }
 
+/**
+ * Full result content for the `/subagents` modal: error/status header,
+ * system prompt, complete transcript, and usage. Reuses the same rendering
+ * as the interactive chat via `renderTranscript` with everything expanded.
+ */
+export function renderFullResultContent(
+  result: SubAgentResult,
+  theme: Theme,
+  tui?: TUI,
+): Component {
+  const isError = isFailedResult(result)
+  const icon = isError ? theme.fg('error', '✗') : theme.fg('success', '✓')
+  const cwd = result.cwd ?? process.cwd()
+
+  const container = new Container()
+  let header = `${icon} ${theme.fg('toolTitle', theme.bold(result.agent))}${theme.fg('muted', ` (${result.agentSource})`)}`
+  if (isError && result.stopReason)
+    header += ` ${theme.fg('error', `[${result.stopReason}]`)}`
+  container.addChild(new Text(header, 0, 0))
+  if (isError && result.errorMessage)
+    container.addChild(
+      new Text(theme.fg('error', `Error: ${result.errorMessage}`), 0, 0),
+    )
+
+  if (result.systemPrompt) {
+    container.addChild(new Spacer(1))
+    container.addChild(
+      new Text(theme.fg('muted', '─── System prompt ───'), 0, 0),
+    )
+    container.addChild(new Text(result.systemPrompt, 0, 0))
+  }
+  container.addChild(new Spacer(1))
+  container.addChild(new Text(theme.fg('muted', '─── Transcript ───'), 0, 0))
+  const transcript = renderTranscript({
+    messages: result.messages,
+    cwd,
+    expanded: true,
+    hideThinking: false,
+    tui,
+  })
+  if (transcript.length === 0) {
+    container.addChild(new Text(theme.fg('muted', '(no output)'), 0, 0))
+  } else {
+    for (const component of transcript) container.addChild(component)
+  }
+
+  const usageStr = formatUsageStats(result.usage, result.model)
+  if (usageStr) {
+    container.addChild(new Spacer(1))
+    container.addChild(new Text(theme.fg('dim', usageStr), 0, 0))
+  }
+  return container
+}
+
 export function renderSubagentResult(
-  result: AgentToolResult<SingleResult>,
-  options: ToolRenderResultOptions,
+  result: AgentToolResult<SubAgentResult>,
+  _options: ToolRenderResultOptions,
   theme: Theme,
 ): Component {
-  const { expanded } = options
+  // Subagent rows always render the collapsed card; the full transcript
+  // lives in the `/subagents` modal (the global expand toggle is ignored).
   const r = result.details
   if (!r) {
     const text = result.content[0]
@@ -211,59 +277,34 @@ export function renderSubagentResult(
       new Text(theme.fg('error', `Error: ${r.errorMessage}`), 0, 0),
     )
 
-  if (expanded) {
-    if (r.systemPrompt) {
-      container.addChild(new Spacer(1))
-      container.addChild(new Text(theme.fg('muted', '─── System prompt ───'), 0, 0))
-      container.addChild(new Text(r.systemPrompt, 0, 0))
-    }
-    container.addChild(new Spacer(1))
-    container.addChild(new Text(theme.fg('muted', '─── Transcript ───'), 0, 0))
-    const transcript = renderTranscript({
-      messages: r.messages,
-      cwd,
-      expanded: true,
-      hideThinking: false,
-    })
-    if (transcript.length === 0) {
-      container.addChild(new Text(theme.fg('muted', '(no output)'), 0, 0))
-    } else {
-      for (const component of transcript) container.addChild(component)
-    }
-  } else {
-    if (r.systemPrompt) {
-      container.addChild(
-        new Text(
-          theme.fg(
-            'muted',
-            `system prompt: ${systemPromptPreview(r.systemPrompt)}`,
-          ),
-          0,
-          0,
-        ),
-      )
-    }
-    const skipped = Math.max(0, r.messages.length - COLLAPSED_MESSAGE_COUNT)
-    if (skipped > 0)
-      container.addChild(
-        new Text(theme.fg('muted', `… ${skipped} earlier messages`), 0, 0),
-      )
-    const transcript = renderTranscript({
-      messages: r.messages.slice(-COLLAPSED_MESSAGE_COUNT),
-      cwd,
-      expanded: false,
-      hideThinking: false,
-    })
-    if (transcript.length === 0) {
-      container.addChild(new Text(theme.fg('muted', '(no output)'), 0, 0))
-    } else {
-      for (const component of transcript) container.addChild(component)
-    }
-    if (skipped > 0)
-      container.addChild(
-        new Text(theme.fg('muted', '(Ctrl+O to expand)'), 0, 0),
-      )
+  if (r.systemPrompt) {
+    container.addChild(
+      new Text(
+        theme.fg('muted', `system prompt: ${systemPromptPreview(r.systemPrompt)}`),
+        0,
+        0,
+      ),
+    )
   }
+  const skipped = Math.max(0, r.messages.length - COLLAPSED_MESSAGE_COUNT)
+  if (skipped > 0)
+    container.addChild(
+      new Text(theme.fg('muted', `… ${skipped} earlier messages`), 0, 0),
+    )
+  const transcript = renderTranscript({
+    messages: r.messages.slice(-COLLAPSED_MESSAGE_COUNT),
+    cwd,
+    expanded: false,
+    hideThinking: false,
+  })
+  if (transcript.length === 0) {
+    container.addChild(new Text(theme.fg('muted', '(no output)'), 0, 0))
+  } else {
+    for (const component of transcript) container.addChild(component)
+  }
+  container.addChild(
+    new Text(theme.fg('muted', 'run /subagents for the full transcript'), 0, 0),
+  )
 
   const usageStr = formatUsageStats(r.usage, r.model)
   if (usageStr) {

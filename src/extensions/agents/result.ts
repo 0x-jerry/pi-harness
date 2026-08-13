@@ -1,5 +1,5 @@
 import type { Message } from '@earendil-works/pi-ai'
-import type { SingleResult, UsageStats } from './types.ts'
+import type { SubAgentResult, UsageStats } from './types.ts'
 
 export function emptyUsage(): UsageStats {
   return {
@@ -14,8 +14,8 @@ export function emptyUsage(): UsageStats {
 }
 
 export function emptyResult(
-  options: { agent: string; task: string } & Partial<SingleResult>,
-): SingleResult {
+  options: { agent: string; task: string } & Partial<SubAgentResult>,
+): SubAgentResult {
   const { agent, task, ...overrides } = options
   return {
     agent,
@@ -42,7 +42,7 @@ export function getFinalOutput(messages: Message[]): string {
   return ''
 }
 
-export function isFailedResult(result: SingleResult): boolean {
+export function isFailedResult(result: SubAgentResult): boolean {
   return (
     result.exitCode !== 0 ||
     result.stopReason === 'error' ||
@@ -51,7 +51,7 @@ export function isFailedResult(result: SingleResult): boolean {
 }
 
 /** Human-readable output of a result, preferring error diagnostics when it failed. */
-export function getResultOutput(result: SingleResult): string {
+export function getResultOutput(result: SubAgentResult): string {
   if (isFailedResult(result)) {
     return (
       result.errorMessage ||

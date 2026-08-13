@@ -8,7 +8,7 @@
  * `DefaultResourceLoader`, so the subagent sees exactly the environment a
  * spawned `pi` process would: extensions, skills, prompt templates, themes,
  * AGENTS.md context files, and APPEND_SYSTEM.md. Events (messages, usage,
- * tool calls) stream back to the parent session as a `SingleResult` for the
+ * tool calls) stream back to the parent session as a `SubAgentResult` for the
  * TUI to render.
  *
  * Trade-offs vs. spawning a `pi` process:
@@ -36,7 +36,7 @@ import {
   SettingsManager,
 } from '@earendil-works/pi-coding-agent'
 import { emptyResult, getFinalOutput } from './result.ts'
-import type { AgentConfig, OnUpdateCallback, SingleResult } from './types.ts'
+import type { AgentConfig, OnUpdateCallback, SubAgentResult } from './types.ts'
 
 /**
  * One shared ModelRuntime for all subagent runs. It reads the same
@@ -58,6 +58,21 @@ function getSharedModelRuntime(): Promise<ModelRuntime> {
     throw error
   })
   return sharedRuntimePromise
+}
+
+/**
+ * Mark a result as an aborted run.
+ *
+ * Returning the aborted result instead of throwing preserves the streamed
+ * transcript the session produced up to the abort, and the `stopReason`
+ * lets `finishTask` classify the task as `'aborted'` in the store (the
+ * `/subagents` modal then shows the real status instead of a failure).
+ */
+function markAborted(result: SubAgentResult): SubAgentResult {
+  result.stopReason = 'aborted'
+  result.exitCode = 1
+  result.errorMessage ||= 'Subagent was aborted'
+  return result
 }
 
 /**
@@ -111,7 +126,7 @@ export interface RunSingleAgentOptions {
 
 export async function runSingleAgent(
   options: RunSingleAgentOptions,
-): Promise<SingleResult> {
+): Promise<SubAgentResult> {
   const {
     agents,
     agentName,
@@ -135,7 +150,7 @@ export async function runSingleAgent(
     })
   }
 
-  const currentResult: SingleResult = emptyResult({
+  const currentResult: SubAgentResult = emptyResult({
     agent: agentName,
     task,
     agentSource: agent.source,
@@ -221,7 +236,7 @@ export async function runSingleAgent(
     runSession.subscribe((event) => {
       if (event.type !== 'message_end' || !event.message) return
       // AgentMessage can include custom (non-LLM) message types; the
-      // SingleResult surface only carries standard LLM messages.
+      // SubAgentResult surface only carries standard LLM messages.
       const msg = event.message as Message
       currentResult.messages.push(msg)
 
@@ -256,9 +271,7 @@ export async function runSingleAgent(
       }
     }
 
-    if (signal?.aborted) {
-      throw new Error('Subagent was aborted')
-    }
+    if (signal?.aborted) return markAborted(currentResult)
 
     try {
       // The task is the session's user prompt — a fresh user message on top
@@ -268,11 +281,14 @@ export async function runSingleAgent(
       await runSession.prompt(task, { expandPromptTemplates: false })
     } catch (error) {
       // Preflight failures (e.g. no API key for the resolved model) surface
-      // as exceptions; the run itself reports errors via stopReason.
+      // as exceptions; the run itself reports errors via stopReason. When
+      // the parent signal fired mid-run, prompt() itself is what threw, so
+      // classify the result as aborted rather than a plain failure.
       currentResult.exitCode = 1
       currentResult.errorMessage =
         error instanceof Error ? error.message : String(error)
       currentResult.stderr = currentResult.errorMessage
+      if (signal?.aborted) currentResult.stopReason = 'aborted'
       return currentResult
     }
   } finally {
@@ -286,6 +302,6 @@ export async function runSingleAgent(
       ? 1
       : 0
 
-  if (signal?.aborted) throw new Error('Subagent was aborted')
+  if (signal?.aborted) return markAborted(currentResult)
   return currentResult
 }

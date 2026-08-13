@@ -25,7 +25,7 @@ export interface UsageStats {
 }
 
 /** Result of one subagent run. */
-export interface SingleResult {
+export interface SubAgentResult {
   agent: string
   agentSource: AgentSource | 'unknown'
   task: string
@@ -48,5 +48,5 @@ export interface SingleResult {
 }
 
 export type OnUpdateCallback = (
-  partial: AgentToolResult<SingleResult>,
+  partial: AgentToolResult<SubAgentResult>,
 ) => void
