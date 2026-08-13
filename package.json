@@ -4,14 +4,14 @@
   "description": "My personalized pi package: extensions, skills, prompts, and themes",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/0x-jerry/pi-package.git"
+    "url": "git+https://github.com/0x-jerry/pi-harness.git"
   },
   "author": "",
   "type": "module",
   "bugs": {
-    "url": "https://github.com/0x-jerry/pi-package/issues"
+    "url": "https://github.com/0x-jerry/pi-harness/issues"
   },
-  "homepage": "https://github.com/0x-jerry/pi-package#readme",
+  "homepage": "https://github.com/0x-jerry/pi-harness#readme",
   "publishConfig": {
     "registry": "https://registry.npmjs.org",
     "access": "public"
