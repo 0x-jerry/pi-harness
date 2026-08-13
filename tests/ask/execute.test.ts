@@ -91,13 +91,21 @@ function textOf(result: {
 }
 
 const singleParams: AskCallArgs = {
-  questions: [{ question: 'Which DB?', options: ['postgres', 'sqlite'] }],
+  questions: [
+    {
+      question: 'Which DB?',
+      options: [{ label: 'postgres' }, { label: 'sqlite' }],
+    },
+  ],
 }
 
 const batchParams: AskCallArgs = {
   questions: [
-    { question: 'q1', options: ['a', 'b'] },
-    { question: 'q2', options: ['x', 'y', 'z'] },
+    { question: 'q1', options: [{ label: 'a' }, { label: 'b' }] },
+    {
+      question: 'q2',
+      options: [{ label: 'x' }, { label: 'y' }, { label: 'z' }],
+    },
   ],
 }
 
@@ -116,7 +124,7 @@ describe('ask validation and guards', () => {
   test('rejects a question with empty options', async () => {
     const result = await run({
       questions: [
-        { question: 'q1', options: ['a'] },
+        { question: 'q1', options: [{ label: 'a' }] },
         { question: 'q2', options: [] },
       ],
     })
@@ -204,7 +212,7 @@ describe('ask dialog interaction', () => {
           {
             question: 'q1',
             description: 'some context',
-            options: ['a', 'b'],
+            options: [{ label: 'a' }, { label: 'b' }],
           },
         ],
       },
@@ -212,6 +220,49 @@ describe('ask dialog interaction', () => {
     )
     expect(result.details.items[0]?.description).toBe('some context')
     expect(result.details.items[0]?.answer).toBe('a')
+  })
+
+  test('option descriptions render on their own indented line below the label', async () => {
+    const ctx: any = {
+      mode: 'tui',
+      ui: {
+        custom: (factory: any) =>
+          new Promise((resolve) => {
+            const comp = factory(stubTui, stubTheme(), {}, resolve)
+            const lines = comp.render(80)
+            const labelIdx = lines.findIndex((l: string) =>
+              l.includes('1. postgres'),
+            )
+            const descIdx = lines.findIndex((l: string) =>
+              l.includes('ACID compliant'),
+            )
+            expect(labelIdx).toBeGreaterThanOrEqual(0)
+            expect(descIdx).toBeGreaterThan(labelIdx)
+            // indented below the label (indent sits after <muted> markers)
+            expect(lines[descIdx]).toContain('    ACID compliant')
+            comp.handleInput('\r')
+            comp.handleInput('\r')
+          }),
+      },
+    }
+    const result = await tool.execute(
+      'call-8',
+      {
+        questions: [
+          {
+            question: 'Which DB?',
+            options: [
+              { label: 'postgres', description: 'ACID compliant' },
+              { label: 'sqlite' },
+            ],
+          },
+        ],
+      },
+      undefined,
+      undefined,
+      ctx,
+    )
+    expect(result.details.items[0]!.answer).toBe('postgres')
   })
 
   test('custom answer: selecting the ✎ option opens the editor and submits typed text', async () => {
@@ -474,10 +525,13 @@ describe('ask dialog interaction', () => {
         {
           question: 'q1',
           options: [
-            'a very very long option that easily exceeds the primary column width in this test',
+            {
+              label:
+                'a very very long option that easily exceeds the primary column width in this test',
+            },
           ],
         },
-        { question: 'q2', options: ['x'] },
+        { question: 'q2', options: [{ label: 'x' }] },
       ],
     }
     const ctx: any = {

@@ -33,8 +33,8 @@ describe('resolveItems', () => {
   test('returns the questions array', () => {
     const args: AskCallArgs = {
       questions: [
-        { question: 'a', options: ['x'] },
-        { question: 'b', options: ['y'] },
+        { question: 'a', options: [{ label: 'x' }] },
+        { question: 'b', options: [{ label: 'y' }] },
       ],
     }
     expect(resolveItems(args)).toHaveLength(2)
@@ -55,7 +55,7 @@ describe('renderAskCall', () => {
             {
               question: 'Which DB?',
               description: 'For the new project',
-              options: ['postgres', 'sqlite'],
+              options: [{ label: 'postgres' }, { label: 'sqlite' }],
             },
           ],
         },
@@ -73,9 +73,9 @@ describe('renderAskCall', () => {
       renderAskCall(
         {
           questions: [
-            { question: 'q1', options: ['a'] },
-            { question: 'q2', options: ['b'] },
-            { question: 'q3', options: ['c'] },
+            { question: 'q1', options: [{ label: 'a' }] },
+            { question: 'q2', options: [{ label: 'b' }] },
+            { question: 'q3', options: [{ label: 'c' }] },
           ],
         },
         theme,

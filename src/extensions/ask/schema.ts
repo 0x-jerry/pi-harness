@@ -11,9 +11,22 @@ export const AskParam = Type.Object({
         'Optional extra context or explanation shown with the question',
     }),
   ),
-  options: Type.Array(Type.String(), {
-    description: 'Answer choices for the user to pick from',
-  }),
+  options: Type.Array(
+    Type.Object({
+      label: Type.String({
+        description: 'The text shown for the option',
+      }),
+      description: Type.Optional(
+        Type.String({
+          description: 'Optional extra detail shown under the label',
+        }),
+      ),
+    }),
+    {
+      description:
+        'Answer choices for the user to pick from; each has a label and an optional description',
+    },
+  ),
 })
 
 export type AskItem = Static<typeof AskParam>

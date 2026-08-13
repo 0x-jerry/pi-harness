@@ -6,10 +6,10 @@
  * TUI rendering in ./render.ts.
  *
  * Usage:
- *   { questions: [{ question: "...", options: ["a", "b", "c"] }] }
+ *   { questions: [{ question: "...", options: [{ label: "a" }, { label: "b" }] }] }
  *   { questions: [
- *       { question: "q1", description?: "...", options: ["yes", "no"] },
- *       { question: "q2", options: ["x", "y", "z"] },
+ *       { question: "q1", description?: "...", options: [{ label: "yes" }, { label: "no" }] },
+ *       { question: "q2", options: [{ label: "x", description: "why x" }, { label: "y" }] },
  *     ]
  *   }
  *
@@ -29,7 +29,7 @@ export default function (pi: ExtensionAPI) {
     label: 'Ask',
     description: [
       'Ask the user one or more questions and let them pick from the provided options, or type a custom answer when none fit.',
-      'Pass `questions` as an array of { question, description?, options } items; each question is answered one at a time in a single dialog with its own options list.',
+      'Pass `questions` as an array of { question, description?, options } items; each option is an object { label, description? } and each question is answered one at a time in a single dialog with its own options list.',
       'If the user cancels the dialog, the tool fails with an error — treat that as "the user declined to answer".',
       'Use this when you need a decision, preference, or choice that only the user can make, instead of guessing or assuming.',
     ].join(' '),

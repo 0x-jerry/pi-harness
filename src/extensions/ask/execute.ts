@@ -14,7 +14,7 @@ function blankItemDetails(items: AskItem[]): AskItemDetails[] {
   return items.map((it) => ({
     question: it.question,
     description: it.description,
-    options: it.options,
+    options: it.options.map((o) => o.label),
     answer: null,
     index: null,
     custom: false,
@@ -39,13 +39,13 @@ function buildItemDetails(
     return {
       question: it.question,
       description: it.description,
-      options: it.options,
+      options: it.options.map((o) => o.label),
       answer:
         custom != null
           ? custom
           : optIndex == null
             ? null
-            : (it.options[optIndex] ?? null),
+            : (it.options[optIndex]?.label ?? null),
       index: optIndex,
       custom: custom != null,
     }
@@ -90,7 +90,7 @@ export async function executeAsk(
 ): Promise<AgentToolResult<AskDetails>> {
   if (items.length === 0) {
     return result(
-      'Error: `questions` must be a non-empty array of { question, options } objects.',
+      'Error: `questions` must be a non-empty array of { question, options } objects with options as { label, description? } entries.',
       { items: [], cancelled: true },
     )
   }

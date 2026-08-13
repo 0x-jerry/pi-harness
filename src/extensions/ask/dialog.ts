@@ -2,8 +2,9 @@
  * Interactive ask dialog.
  *
  * Walks through the questions one at a time. Each question renders its
- * options in a SelectList with a trailing "✎ Type a custom answer…" choice
- * that opens an inline Editor when none of the options fit.
+ * options in a custom OptionList (label + optional indented description)
+ * with a trailing "✎ Type a custom answer…" choice that opens an inline
+ * Editor when none of the options fit.
  *
  * Navigation: arrow keys move within the options, number keys 1-9 jump to an
  * option, Enter selects, ← goes to the previous question, → goes to the
@@ -32,11 +33,11 @@ import {
   SelectList,
   type TUI,
   type Component,
-  truncateToWidth,
   visibleWidth,
   wrapTextWithAnsi,
 } from '@earendil-works/pi-tui'
 import type { AskItem } from './schema.ts'
+import { OptionList } from './option-list.ts'
 
 /** Marker value for the trailing "type a custom answer" option. */
 const CUSTOM_VALUE = 'custom'
@@ -79,7 +80,7 @@ function answerSummary(
   custom: string | null,
 ): string {
   if (custom != null) return `✎ ${custom}`
-  if (optIndex != null) return (item.options[optIndex] ?? '(no answer)')
+  if (optIndex != null) return item.options[optIndex]?.label ?? '(no answer)'
   return '(no answer)'
 }
 
@@ -106,7 +107,7 @@ export function createAskDialog(items: AskItem[]) {
     let index = 0
     let editMode = false
     let confirmMode = false
-    let selectList: SelectList
+    let selectList: OptionList
     let confirmList: SelectList
 
     const themeList = selectListTheme(theme)
@@ -175,11 +176,12 @@ export function createAskDialog(items: AskItem[]) {
       const chosen = selected[index]
       const custom = customAnswers[index]
       const numberedItems: SelectItem[] = [
-        // The picked option is marked with a check mark at the end via
-        // truncatePrimary (see layout below) so it survives truncation.
+        // Labels are numbered here; the OptionList adds the check mark on
+        // the picked option and renders each option's description below.
         ...item.options.map((opt, i) => ({
           value: `${i}`,
-          label: `${i + 1}. ${opt}`,
+          label: `${i + 1}. ${opt.label}`,
+          description: opt.description,
         })),
         // Once a custom answer exists, it replaces the prompt label; Enter
         // on it re-opens the editor to edit it.
@@ -189,24 +191,15 @@ export function createAskDialog(items: AskItem[]) {
             custom != null ? `✎ ${custom}` : '✎ Type a custom answer…',
         },
       ]
-      selectList = new SelectList(
+      selectList = new OptionList(
         numberedItems,
         Math.min(numberedItems.length, 10),
         themeList,
         {
-          // SelectList truncates labels from the end, which would cut off a
-          // trailing check mark; reserve room for it when the option is the
-          // one that was picked.
-          truncatePrimary: ({ text, maxWidth, item }) => {
-            const marked =
-              item.value !== CUSTOM_VALUE && chosen === Number(item.value)
-            const base = truncateToWidth(
-              text,
-              Math.max(1, maxWidth - (marked ? 2 : 0)),
-              '…',
-            )
-            return marked ? `${base} ✓` : base
-          },
+          // Mark the option the user picked with a trailing check mark;
+          // the component reserves room for it so it survives truncation.
+          isMarked: (it) =>
+            it.value !== CUSTOM_VALUE && chosen === Number(it.value),
         },
       )
       selectList.onSelect = (it) => {

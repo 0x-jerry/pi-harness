@@ -63,7 +63,9 @@ export function renderAskCall(
   if (first.description) {
     text += `\n  ${theme.fg('muted', first.description)}`
   }
-  const numbered = first.options.map((o, i) => `${i + 1}. ${o}`).join(', ')
+  const numbered = first.options
+    .map((o, i) => `${i + 1}. ${o.label}`)
+    .join(', ')
   text += `\n${theme.fg('dim', `  Options: ${numbered}`)}`
   return new Text(text, 0, 0)
 }

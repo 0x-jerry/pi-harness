@@ -21,9 +21,37 @@ describe('AskParams schema', () => {
     expect(item.properties.options.type).toBe('array')
   })
 
-  test('accepts a single valid question', () => {
+  test('each option has a required label and an optional description', () => {
+    const option =
+      AskParams.properties.questions.items.properties.options.items
+    expect(option.type).toBe('object')
+    expect(Object.keys(option.properties)).toEqual(['label', 'description'])
+    expect(option.required).toEqual(['label'])
+  })
+
+  test('accepts a single valid question with label-only options', () => {
     const input = {
-      questions: [{ question: 'Which DB?', options: ['postgres', 'sqlite'] }],
+      questions: [
+        {
+          question: 'Which DB?',
+          options: [{ label: 'postgres' }, { label: 'sqlite' }],
+        },
+      ],
+    }
+    expect(Value.Check(AskParams, input)).toBe(true)
+  })
+
+  test('accepts options with optional descriptions', () => {
+    const input = {
+      questions: [
+        {
+          question: 'q',
+          options: [
+            { label: 'a', description: 'first choice' },
+            { label: 'b' },
+          ],
+        },
+      ],
     }
     expect(Value.Check(AskParams, input)).toBe(true)
   })
@@ -31,8 +59,12 @@ describe('AskParams schema', () => {
   test('accepts a batch with per-question options', () => {
     const input = {
       questions: [
-        { question: 'q1', options: ['a'] },
-        { question: 'q2', description: 'ctx', options: ['x', 'y'] },
+        { question: 'q1', options: [{ label: 'a' }] },
+        {
+          question: 'q2',
+          description: 'ctx',
+          options: [{ label: 'x' }, { label: 'y' }],
+        },
       ],
     }
     expect(Value.Check(AskParams, input)).toBe(true)
@@ -45,20 +77,42 @@ describe('AskParams schema', () => {
   })
 
   test('rejects a question without question text', () => {
-    expect(Value.Check(AskParams, { questions: [{ options: ['a'] }] })).toBe(
-      false,
-    )
+    expect(
+      Value.Check(AskParams, {
+        questions: [{ options: [{ label: 'a' }] }],
+      }),
+    ).toBe(false)
   })
 
-  test('rejects options that are not strings', () => {
+  test('rejects options that are plain strings', () => {
     expect(
-      Value.Check(AskParams, { questions: [{ question: 'q', options: [1, 2] }] }),
+      Value.Check(AskParams, {
+        questions: [{ question: 'q', options: ['a', 'b'] }],
+      }),
+    ).toBe(false)
+  })
+
+  test('rejects options without a label', () => {
+    expect(
+      Value.Check(AskParams, {
+        questions: [{ question: 'q', options: [{ description: 'x' }] }],
+      }),
+    ).toBe(false)
+  })
+
+  test('rejects options whose label is not a string', () => {
+    expect(
+      Value.Check(AskParams, {
+        questions: [{ question: 'q', options: [{ label: 1 }, { label: 2 }] }],
+      }),
     ).toBe(false)
   })
 
   test('rejects questions that is not an array', () => {
     expect(
-      Value.Check(AskParams, { questions: { question: 'q', options: ['a'] } }),
+      Value.Check(AskParams, {
+        questions: { question: 'q', options: [{ label: 'a' }] },
+      }),
     ).toBe(false)
   })
 
