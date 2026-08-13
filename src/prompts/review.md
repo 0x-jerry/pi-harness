@@ -3,4 +3,4 @@ description: Use reviewer agent to review code changes for bugs, security, and q
 argument-hint: "[scope]"
 ---
 
-Tell reviewer to review code, scope is: ${1:-the current git changes}
+Tell reviewer to review code, scope is: ${@:-the current git changes}
