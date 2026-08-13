@@ -10,12 +10,8 @@
  */
 
 import * as path from 'node:path'
-import {
-  CONFIG_DIR_NAME,
-  type ExtensionAPI,
-  getAgentDir,
-} from '@earendil-works/pi-coding-agent'
-import { discoverAgents } from './agents.ts'
+import { type ExtensionAPI } from '@earendil-works/pi-coding-agent'
+import { discoverAgents, findNearestProjectAgentsDir } from './agents.ts'
 import {
   emptyResult,
   getFinalOutput,
@@ -25,7 +21,7 @@ import {
 import { createSubagentsModal } from './modal.ts'
 import { renderSubagentCall, renderSubagentResult } from './render.ts'
 import { runSingleAgent } from './run.ts'
-import { SubagentParams } from './schema.ts'
+import { ListAgentsParams, SubagentParams } from './schema.ts'
 import {
   addTask,
   clearTasks,
@@ -70,11 +66,8 @@ export default function (pi: ExtensionAPI) {
   pi.registerTool({
     name: 'subagent',
     label: 'Subagent',
-    description: [
-      'Delegate a task to a specialized subagent with an isolated context window.',
-      'The subagent runs in-process via the pi SDK with its own system prompt, tool allowlist, and the full environment (extensions, skills, prompt templates, AGENTS.md context).',
-      `Agents are discovered from all levels: builtin agents shipped with this package, user agents in ${path.join(getAgentDir(), 'agents')}, and project agents in ${CONFIG_DIR_NAME}/agents.`,
-    ].join(' '),
+    description:
+      'Delegate a task to a specialized subagent with an isolated context window, its own system prompt and tools. Agents come from builtin, user, and project levels.',
     parameters: SubagentParams,
 
     async execute(toolCallId, params, signal, onUpdate, ctx) {
@@ -165,6 +158,55 @@ export default function (pi: ExtensionAPI) {
 
     renderCall: renderSubagentCall,
     renderResult: renderSubagentResult,
+  })
+
+  pi.registerTool({
+    name: 'list_agents',
+    label: 'List Agents',
+    description:
+      'List all available agents (builtin, user, and project levels) with their name, description, source, model, and allowed tools.',
+    parameters: ListAgentsParams,
+
+    async execute(_toolCallId, _params, _signal, _onUpdate, ctx) {
+      // Only the current working directory is listed, mirroring exactly what
+      // the subagent tool would load for this session.
+      const cwd = path.resolve(ctx.cwd)
+      const projectTrusted = ctx.isProjectTrusted()
+      const agents = await discoverAgents(cwd, projectTrusted)
+
+      const lines = agents.map((agent) => {
+        const meta: string[] = [`source: ${agent.source}`]
+        if (agent.model) meta.push(`model: ${agent.model}`)
+        if (agent.tools) meta.push(`tools: ${agent.tools.join(', ')}`)
+        return `- ${agent.name}: ${agent.description.replace(/\s+/g, ' ').trim()} (${meta.join(', ')})`
+      })
+
+      // A listing that silently misses a project's agents is misleading, so
+      // call out when they exist but were skipped for trust.
+      const projectAgentsDir = findNearestProjectAgentsDir(cwd)
+      if (!projectTrusted && projectAgentsDir) {
+        lines.push(
+          `(project agents in ${projectAgentsDir} omitted: directory not trusted)`,
+        )
+      }
+
+      return {
+        content: [
+          {
+            type: 'text',
+            text: lines.length > 0 ? lines.join('\n') : 'No agents found.',
+          },
+        ],
+        // Keep systemPrompt/filePath out of the persisted transcript details.
+        details: agents.map(({ name, description, source, model, tools }) => ({
+          name,
+          description,
+          source,
+          model,
+          tools,
+        })),
+      }
+    },
   })
 
   // Modals need an interactive terminal; other modes just notify.

@@ -12,3 +12,6 @@ export const SubagentParams = Type.Object({
 })
 
 export type SubagentCallArgs = Static<typeof SubagentParams>
+
+/** list_agents takes no parameters; it lists agents for the current cwd. */
+export const ListAgentsParams = Type.Object({})

@@ -7,7 +7,7 @@
  *   name: scout
  *   description: Fast codebase recon that returns compressed context
  *   tools: read, grep, find, ls, bash
- *   model: claude-haiku-4-5   # optional; omitting uses the active model
+ *   model: deepseek/deepseek-v4-flash   # optional; omitting uses the active model
  *   ---
  *
  *   System prompt for the agent goes here.
@@ -136,7 +136,7 @@ function isDirectory(p: string): boolean {
   }
 }
 
-function findNearestProjectAgentsDir(cwd: string): string | null {
+export function findNearestProjectAgentsDir(cwd: string): string | null {
   let currentDir = cwd
   while (true) {
     const candidate = path.join(currentDir, CONFIG_DIR_NAME, 'agents')
