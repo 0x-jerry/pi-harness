@@ -1,6 +1,6 @@
 {
   "name": "@0x-jerry/pi-harness",
-  "version": "0.3.4",
+  "version": "0.3.5",
   "description": "My personalized pi package: extensions, skills, prompts, and themes",
   "repository": {
     "type": "git",
