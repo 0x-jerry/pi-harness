@@ -22,9 +22,8 @@ ${@:-the current task}
      - Any dependencies on earlier steps or on external systems
      - How to verify that step is done
    - Flag risks and tricky parts up front (edge cases, breaking changes, performance, security).
-   - Call out what is explicitly out of scope.
 
 4. **Finish with a verification checklist**
    - The concrete checks (build, tests, manual scenarios) that must pass before the task is considered done.
 
-Keep the plan concrete and actionable — a developer should be able to execute it step by step without re-deriving the design. Estimate relative effort per step where it helps.
+Keep the plan concrete and actionable — a developer should be able to execute it step by step without re-deriving the design.
