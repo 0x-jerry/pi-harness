@@ -31,8 +31,8 @@ Defaults: a single catch-all bash rule, so every shell command is reviewed and t
 ## Install/Update
 
 ```bash
-pi install npm:@0x-jerry/pi-harness
-pi update npm:@0x-jerry/pi-harness
+pi install https://github.com/0x-jerry/pi-harness
+pi update https://github.com/0x-jerry/pi-harness
 ```
 
 ## Development
