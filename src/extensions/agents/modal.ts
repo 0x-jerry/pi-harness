@@ -2,9 +2,10 @@
  * Overlay modal for the `/subagents` command.
  *
  * Lists every subagent task tracked by the store — running, done, failed,
- * and aborted — and renders the selected task's full result (status header,
- * system prompt, complete transcript, usage) in a scrollable view. Running
- * tasks show their latest streamed partial state with a live elapsed timer.
+ * and aborted — and renders the selected task's result (status header,
+ * system prompt, the windowed transcript, usage) in a scrollable view.
+ * Running tasks show their latest streamed partial state with a live
+ * elapsed timer.
  *
  * The factory matches pi's `ctx.ui.custom` contract: it receives the TUI,
  * theme, keybindings, and a `done` callback, and returns a renderable
@@ -224,7 +225,7 @@ export function createSubagentsModal(tasks: SubagentTask[]) {
       const lines: string[] = []
 
       if (selectedTask) {
-        const full = renderFullResultContent(selectedTask.details, theme, tui)
+        const full = renderFullResultContent(selectedTask.details, theme)
         contentLines = full.render(innerWidth).map((line) => ` ${line}`)
         const max = Math.max(0, contentLines.length - viewportHeight())
         if (scrollTop > max) scrollTop = max

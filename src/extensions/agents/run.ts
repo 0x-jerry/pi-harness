@@ -23,7 +23,7 @@
  *   would be.
  */
 
-import type { Message, Model } from '@earendil-works/pi-ai'
+import type { AssistantMessage, Message, Model } from '@earendil-works/pi-ai'
 import type { ThinkingLevel } from '@earendil-works/pi-agent-core'
 import {
   AgentSession,
@@ -34,6 +34,7 @@ import {
   resolveCliModel,
   SessionManager,
   SettingsManager,
+  type AgentSessionEvent,
 } from '@earendil-works/pi-coding-agent'
 import { emptyResult, getFinalOutput } from './result.ts'
 import type { AgentConfig, OnUpdateCallback, SubAgentResult } from './types.ts'
@@ -105,6 +106,146 @@ function createSubagentResourceLoader(
   })
 }
 
+/** Accumulate per-turn usage/stats on the final assistant message only. */
+function collectAssistantStats(
+  result: SubAgentResult,
+  msg: AssistantMessage,
+): void {
+  result.usage.turns++
+  const usage = msg.usage
+  if (usage) {
+    result.usage.input += usage.input || 0
+    result.usage.output += usage.output || 0
+    result.usage.cacheRead += usage.cacheRead || 0
+    result.usage.cacheWrite += usage.cacheWrite || 0
+    result.usage.cost += usage.cost?.total || 0
+    result.usage.contextTokens = usage.totalTokens || 0
+  }
+  if (!result.model && msg.model) result.model = msg.model
+  if (msg.stopReason) result.stopReason = msg.stopReason
+  if (msg.errorMessage) result.errorMessage = msg.errorMessage
+}
+
+/**
+ * Identity slot per streaming result: the assistant message object most
+ * recently delivered, so `message_end` can tell a live continuation from
+ * pi's synthetic failure pair (`handleRunFailure` emits `message_start` +
+ * `message_end` with the same object on abort/error).
+ */
+const liveSlots = new WeakMap<SubAgentResult, { pending?: Message }>()
+
+function liveSlot(result: SubAgentResult): { pending?: Message } {
+  let slot = liveSlots.get(result)
+  if (!slot) {
+    slot = {}
+    liveSlots.set(result, slot)
+  }
+  return slot
+}
+
+/** pi's synthetic failure message (handleRunFailure): an empty assistant turn. */
+function isFailureMessage(msg: Message): boolean {
+  if (msg.role !== 'assistant') return false
+  if (msg.stopReason !== 'aborted' && msg.stopReason !== 'error') return false
+  return msg.content.every(
+    (part) =>
+      (part.type === 'text' && !part.text) ||
+      (part.type === 'thinking' && !part.thinking),
+  )
+}
+
+/**
+ * Apply one session event to the streaming result. Returns true when the
+ * shared state changed and a parent update is worth emitting.
+ *
+ * Assistant messages stream through `message_start`/`message_update` as a
+ * growing pending message (`stopReason: 'pending'`) held as the trailing
+ * transcript entry and replaced by the authoritative message at
+ * `message_end`. On abort/error, pi emits a synthetic empty failure turn
+ * (same object for `message_start` and `message_end`) on top of whatever
+ * streamed; a live partial is finalized in place — keeping the streamed
+ * content and adopting the failure state — and a failure with nothing
+ * streamed is dropped rather than duplicated. User and tool-result messages
+ * only arrive whole at `message_end`; their `message_start` carries the
+ * same final object and is skipped to avoid duplicates.
+ */
+export function applySessionEvent(
+  result: SubAgentResult,
+  event: AgentSessionEvent,
+): boolean {
+  if (event.type === 'message_start' || event.type === 'message_update') {
+    const msg = event.message as Message
+    if (msg.role !== 'assistant') return false
+    const slot = liveSlot(result)
+    const tail = result.messages[result.messages.length - 1]
+    const tailPending =
+      tail?.role === 'assistant' && tail.stopReason === 'pending'
+    if (tailPending) {
+      // Continuation of the streaming message, or the synthetic failure pair
+      // layered on top of a live partial: keep the partial and finalize it
+      // at message_end instead of replacing — a cancel must not discard what
+      // already streamed.
+      if (msg.stopReason === 'pending') {
+        result.messages[result.messages.length - 1] = msg
+        slot.pending = msg
+        return true
+      }
+      slot.pending = msg
+      return false
+    }
+    // Fresh message; synthetic failures carry no content worth rendering, so
+    // skip them and let the paired message_end finalize without a duplicate.
+    if (isFailureMessage(msg)) {
+      slot.pending = msg
+      return false
+    }
+    result.messages.push(msg)
+    slot.pending = msg
+    return true
+  }
+  if (event.type === 'message_end') {
+    const msg = event.message as Message
+    if (msg.role !== 'assistant') {
+      const tail = result.messages[result.messages.length - 1]
+      if (tail === msg) return false
+      result.messages.push(msg)
+      return true
+    }
+    const slot = liveSlot(result)
+    const tail = result.messages[result.messages.length - 1]
+    const tailPending =
+      tail?.role === 'assistant' && tail.stopReason === 'pending'
+    if (msg === slot.pending) {
+      // Synthetic failure pair. Over a live partial, finalize it in place —
+      // keep the streamed content, adopt the failure state — so the aborted
+      // turn stays visible exactly once; without a partial there is nothing
+      // to add (the failure surfaces in the run header).
+      slot.pending = undefined
+      if (tailPending) {
+        const merged = {
+          ...(tail as AssistantMessage),
+          stopReason: msg.stopReason,
+          errorMessage: msg.errorMessage,
+        }
+        result.messages[result.messages.length - 1] = merged
+        collectAssistantStats(result, merged)
+        return true
+      }
+      if (msg.stopReason) result.stopReason ??= msg.stopReason
+      return false
+    }
+    slot.pending = undefined
+    if (tailPending) {
+      result.messages[result.messages.length - 1] = msg
+    } else {
+      result.messages.push(msg)
+    }
+    collectAssistantStats(result, msg)
+    return true
+  }
+  return false
+}
+
 export interface RunSingleAgentOptions {
   agents: AgentConfig[]
   agentName: string
@@ -172,6 +313,47 @@ export async function runSingleAgent(
     }
   }
 
+  // Delta updates are coalesced so a burst of stream events does not render
+  // the transcript once per token; message boundaries flush immediately so
+  // the transcript never sits in a stale partial state.
+  let emitTimer: ReturnType<typeof setTimeout> | undefined
+  let lastEmitAt = 0
+  let runDone = false
+  const MIN_EMIT_INTERVAL_MS = 50
+
+  const emitNow = () => {
+    lastEmitAt = Date.now()
+    emitUpdate()
+  }
+
+  const scheduleEmit = (flush: boolean) => {
+    if (runDone) return
+    if (emitTimer) {
+      clearTimeout(emitTimer)
+      emitTimer = undefined
+    }
+    if (flush) {
+      emitNow()
+      return
+    }
+    const delay = MIN_EMIT_INTERVAL_MS - (Date.now() - lastEmitAt)
+    if (delay <= 0) emitNow()
+    else {
+      emitTimer = setTimeout(() => {
+        emitTimer = undefined
+        if (!runDone) emitNow()
+      }, delay)
+    }
+  }
+
+  const stopEmitting = () => {
+    runDone = true
+    if (emitTimer) {
+      clearTimeout(emitTimer)
+      emitTimer = undefined
+    }
+  }
+
   const modelRuntime = await getSharedModelRuntime()
 
   // Resolve the model: agent-specified wins; otherwise inherit the parent
@@ -231,32 +413,14 @@ export async function runSingleAgent(
     // the result.
     currentResult.systemPrompt = session.systemPrompt
 
-    // Forward subagent messages to the parent session so they show up in
-    // the tool result transcript.
+    // Stream subagent messages to the parent session so the tool result
+    // transcript shows them as they are produced (token deltas included).
     runSession.subscribe((event) => {
-      if (event.type !== 'message_end' || !event.message) return
-      // AgentMessage can include custom (non-LLM) message types; the
-      // SubAgentResult surface only carries standard LLM messages.
-      const msg = event.message as Message
-      currentResult.messages.push(msg)
-
-      if (msg.role === 'assistant') {
-        currentResult.usage.turns++
-        const usage = msg.usage
-        if (usage) {
-          currentResult.usage.input += usage.input || 0
-          currentResult.usage.output += usage.output || 0
-          currentResult.usage.cacheRead += usage.cacheRead || 0
-          currentResult.usage.cacheWrite += usage.cacheWrite || 0
-          currentResult.usage.cost += usage.cost?.total || 0
-          currentResult.usage.contextTokens = usage.totalTokens || 0
-        }
-        if (!currentResult.model && msg.model) currentResult.model = msg.model
-        if (msg.stopReason) currentResult.stopReason = msg.stopReason
-        if (msg.errorMessage) currentResult.errorMessage = msg.errorMessage
-      }
-      emitUpdate()
+      if (!applySessionEvent(currentResult, event)) return
+      scheduleEmit(event.type === 'message_end')
     })
+    // Show the transcript immediately, before the first model response.
+    emitNow()
 
     // Cancel a running subagent cleanly when the parent tool call aborts.
     if (signal) {
@@ -293,6 +457,7 @@ export async function runSingleAgent(
     }
   } finally {
     removeAbortListener?.()
+    stopEmitting()
     session?.dispose()
   }
 

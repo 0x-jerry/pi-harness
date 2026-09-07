@@ -3,8 +3,13 @@ import { initTheme } from '@earendil-works/pi-coding-agent'
 import type { Component, TUI } from '@earendil-works/pi-tui'
 import type { Message } from '@earendil-works/pi-ai'
 import {
+  firstLine,
+  formatDuration,
+  isStreamingMessage,
   renderFullResultContent,
   renderSubagentResult,
+  splitTranscript,
+  summarizeArgs,
 } from '../../src/extensions/agents/render.ts'
 import { createSubagentsModal } from '../../src/extensions/agents/modal.ts'
 import { emptyUsage } from '../../src/extensions/agents/result.ts'
@@ -16,11 +21,12 @@ beforeAll(() => {
   initTheme('dark')
 })
 
-/** Minimal theme stub: wraps colors in <color> markers for assertion. */
+/** Minimal theme stub: wraps colors/styles in markers for assertion. */
 function stubTheme(): any {
   return {
     fg: (color: string, s: string) => `<${color}>${s}</>`,
     bold: (s: string) => `*${s}*`,
+    italic: (s: string) => `/${s}/`,
   }
 }
 
@@ -36,16 +42,56 @@ const theme = stubTheme()
 
 /** Minimal ToolRenderResultOptions for renderResult calls. */
 const renderOptions = { expanded: false, isPartial: false }
-const renderOptionsExpanded = { expanded: true, isPartial: false }
 
 function userMsg(text: string): Message {
   return { role: 'user', content: [{ type: 'text', text }] } as Message
 }
 
-function assistantMsg(text: string): Message {
+function assistantMsg(text: string, stopReason = 'stop'): Message {
   return {
     role: 'assistant',
+    stopReason,
     content: [{ type: 'text', text }],
+  } as Message
+}
+
+function thinkingPart(text: string) {
+  return { type: 'thinking', thinking: text } as const
+}
+
+function textPart(text: string) {
+  return { type: 'text', text } as const
+}
+
+function toolCallPart(id: string, name: string, args: object) {
+  return { type: 'toolCall', id, name, arguments: args } as const
+}
+
+function toolCallMsg(
+  id: string,
+  name: string,
+  args: object,
+  timestamp = 1000,
+): Message {
+  return {
+    role: 'assistant',
+    stopReason: 'toolUse',
+    timestamp,
+    content: [toolCallPart(id, name, args)],
+  } as Message
+}
+
+function toolResultMsg(
+  id: string,
+  opts: { isError?: boolean; text?: string; timestamp?: number } = {},
+): Message {
+  return {
+    role: 'toolResult',
+    toolCallId: id,
+    toolName: 'x',
+    isError: opts.isError ?? false,
+    timestamp: opts.timestamp ?? 5000,
+    content: [{ type: 'text', text: opts.text ?? 'output' }],
   } as Message
 }
 
@@ -111,43 +157,41 @@ function makeTask(
 }
 
 describe('renderSubagentResult', () => {
-  test('collapsed and expanded options produce identical output', () => {
-    const result = makeResult([userMsg('m1'), assistantMsg('m2')])
-    const collapsed = textOf(
-      renderSubagentResult(agentResult(result), renderOptions, theme),
-    )
-    const expanded = textOf(
-      renderSubagentResult(agentResult(result), renderOptionsExpanded, theme),
-    )
-    expect(expanded).toBe(collapsed)
-  })
-
-  test('shows the collapsed card with the /subagents hint', () => {
+  test('shows the card with the /subagents hint', () => {
     const out = textOf(
       renderSubagentResult(agentResult(makeResult([])), renderOptions, theme),
     )
     expect(out).toContain('reviewer')
-    expect(out).toContain('run /subagents for the full transcript')
+    expect(out).toContain('run /subagents to browse agent tasks')
     expect(out).toContain('(no output)')
     expect(out).not.toContain('─── Transcript ───')
   })
 
-  test('tails long transcripts and reports skipped messages', () => {
-    const messages = [
-      userMsg('m1'),
-      assistantMsg('m2'),
-      userMsg('m3'),
-      assistantMsg('m4'),
-      userMsg('m5'),
-      assistantMsg('m6'),
-    ]
+  test('marks partial updates while the run is streaming', () => {
+    const out = textOf(
+      renderSubagentResult(
+        agentResult(makeResult([])),
+        { ...renderOptions, isPartial: true },
+        theme,
+      ),
+    )
+    expect(out).toContain('⏳')
+  })
+
+  test('windows long transcripts and reports skipped messages', () => {
+    const messages: Message[] = []
+    for (let i = 1; i <= 7; i++) {
+      messages.push(userMsg(`m${i}u`))
+      messages.push(assistantMsg(`m${i}a`))
+    }
     const out = textOf(
       renderSubagentResult(agentResult(makeResult(messages)), renderOptions, theme),
     )
-    expect(out).toContain('… 2 earlier messages')
-    expect(out).toContain('m5')
-    expect(out).toContain('m6')
-    expect(out).not.toContain('m1')
+    expect(out).toContain('… 4 earlier messages')
+    expect(out).toContain('m3u')
+    expect(out).toContain('m7a')
+    expect(out).not.toContain('m2a')
+    expect(out).not.toContain('m1u')
   })
 
   test('shows error status for failed results', () => {
@@ -162,10 +206,123 @@ describe('renderSubagentResult', () => {
     expect(out).toContain('[error]')
     expect(out).toContain('Error: boom')
   })
+
+  test('renders assistant text fully, without an icon', () => {
+    const out = textOf(
+      renderSubagentResult(
+        agentResult(makeResult([assistantMsg('plain answer')])),
+        renderOptions,
+        theme,
+      ),
+    )
+    expect(out).toContain('plain answer')
+    expect(out).not.toContain('💭')
+    expect(out).not.toContain('🔧')
+  })
+})
+
+describe('reasoning rendering', () => {
+  test('streams reasoning in full while it is being generated', () => {
+    const streaming = {
+      role: 'assistant',
+      stopReason: 'pending',
+      content: [thinkingPart('line one\nline two')],
+    } as Message
+    const out = textOf(
+      renderSubagentResult(
+        agentResult(makeResult([streaming])),
+        { ...renderOptions, isPartial: true },
+        theme,
+      ),
+    )
+    expect(out).toContain('💭')
+    expect(out).toContain('line one')
+    expect(out).toContain('line two')
+  })
+
+  test('collapses completed reasoning to its first line', () => {
+    const out = textOf(
+      renderSubagentResult(
+        agentResult(
+          makeResult([
+            {
+              role: 'assistant',
+              stopReason: 'stop',
+              content: [thinkingPart('line one\nline two')],
+            } as Message,
+          ]),
+        ),
+        renderOptions,
+        theme,
+      ),
+    )
+    expect(out).toContain('💭')
+    expect(out).toContain('line one')
+    expect(out).not.toContain('line two')
+  })
+
+  test('collapses reasoning as soon as the answer starts streaming', () => {
+    const midTurn = {
+      role: 'assistant',
+      stopReason: 'pending',
+      content: [thinkingPart('reason line one\nreason line two'), textPart('the answer')],
+    } as Message
+    const out = textOf(
+      renderSubagentResult(
+        agentResult(makeResult([midTurn])),
+        { ...renderOptions, isPartial: true },
+        theme,
+      ),
+    )
+    expect(out).toContain('reason line one')
+    expect(out).not.toContain('reason line two')
+    expect(out).toContain('the answer')
+  })
+})
+
+describe('tool call rendering', () => {
+  test('renders name, arguments, and execution time only', () => {
+    const messages = [
+      toolCallMsg('tc1', 'read', { path: '/tmp/x' }),
+      toolResultMsg('tc1', { text: 'SECRET OUTPUT BODY' }),
+    ]
+    const out = textOf(
+      renderSubagentResult(agentResult(makeResult(messages)), renderOptions, theme),
+    )
+    expect(out).toContain('🔧')
+    expect(out).toContain('read')
+    expect(out).toContain('path')
+    expect(out).toContain('· 4.0s')
+    expect(out).not.toContain('SECRET OUTPUT BODY')
+  })
+
+  test('shows an elapsed duration while the call is pending', () => {
+    const out = textOf(
+      renderSubagentResult(
+        agentResult(makeResult([toolCallMsg('tc1', 'bash', {})])),
+        { ...renderOptions, isPartial: true },
+        theme,
+      ),
+    )
+    expect(out).toContain('🔧')
+    expect(out).toContain('bash')
+    expect(out).toMatch(/· \d/)
+  })
+
+  test('tints failed tool calls and shows an error fragment', () => {
+    const messages = [
+      toolCallMsg('tc1', 'read', { path: '/tmp/x' }),
+      toolResultMsg('tc1', { isError: true, text: 'boom: no such file' }),
+    ]
+    const out = textOf(
+      renderSubagentResult(agentResult(makeResult(messages)), renderOptions, theme),
+    )
+    expect(out).toContain('✗ boom')
+  })
 })
 
 describe('renderFullResultContent', () => {
-  test('renders system prompt, full transcript, and usage', () => {
+  test('renders system prompt, windowed transcript, and usage', () => {
     const result = makeResult(
       [userMsg('hello world'), assistantMsg('hi back')],
       { systemPrompt: 'You are a reviewer.' },
@@ -178,11 +335,85 @@ describe('renderFullResultContent', () => {
     expect(out).toContain('hi back')
   })
 
+  test('windows the transcript to the last 10 messages', () => {
+    const messages: Message[] = []
+    for (let i = 1; i <= 6; i++) {
+      messages.push(userMsg(`w${i}u`))
+      messages.push(assistantMsg(`w${i}a`))
+    }
+    const out = textOf(renderFullResultContent(makeResult(messages), theme))
+    expect(out).toContain('… 2 earlier messages')
+    expect(out).toContain('w6a')
+    expect(out).toContain('w2u')
+    expect(out).not.toContain('w1u')
+  })
+
   test('handles a running task with no output yet', () => {
     const result = makeResult([], { systemPrompt: undefined })
     const out = textOf(renderFullResultContent(result, theme))
     expect(out).toContain('─── Transcript ───')
     expect(out).toContain('(no output)')
+  })
+})
+
+describe('transcript helpers', () => {
+  test('firstLine returns the first non-empty line', () => {
+    expect(firstLine('a\nb')).toBe('a')
+    expect(firstLine('\n\nb')).toBe('b')
+    expect(firstLine('x')).toBe('x')
+  })
+
+  test('formatDuration is human-readable and clamped', () => {
+    expect(formatDuration(4000)).toBe('4.0s')
+    expect(formatDuration(-500)).toBe('0.0s')
+    expect(formatDuration(125_000)).toBe('2m5s')
+  })
+
+  test('isStreamingMessage only matches pending assistant messages', () => {
+    expect(isStreamingMessage(assistantMsg('x', 'pending'))).toBe(true)
+    expect(isStreamingMessage(assistantMsg('x', 'stop'))).toBe(false)
+    expect(isStreamingMessage(userMsg('x'))).toBe(false)
+  })
+
+  test('summarizeArgs flattens and truncates arguments', () => {
+    expect(summarizeArgs({ a: 1 })).toBe('{"a":1}')
+    expect(summarizeArgs(undefined)).toBe('{}')
+    const long = summarizeArgs({ a: 'x'.repeat(400) })
+    expect(long.endsWith('…')).toBe(true)
+    expect(long.length).toBeLessThan(170)
+  })
+
+  test('splitTranscript windows display messages and folds tool results', () => {
+    const messages: Message[] = [
+      userMsg('u1'),
+      assistantMsg('a1'),
+      toolResultMsg('tc1'),
+    ]
+    const { skipped, items } = splitTranscript(messages)
+    expect(skipped).toBe(0)
+    expect(items.map((item) => item.message.role)).toEqual(['user', 'assistant'])
+
+    const many = [
+      userMsg('u1'),
+      assistantMsg('a1'),
+      userMsg('u2'),
+      assistantMsg('a2'),
+      userMsg('u3'),
+      assistantMsg('a3'),
+      userMsg('u4'),
+      assistantMsg('a4'),
+      userMsg('u5'),
+      assistantMsg('a5'),
+      userMsg('u6'),
+      assistantMsg('a6'),
+      userMsg('u7'),
+      assistantMsg('a7'),
+    ]
+    const tail = splitTranscript(many)
+    expect(tail.skipped).toBe(4)
+    expect(tail.items).toHaveLength(10)
+    expect(tail.items[0]?.message.role).toBe('user')
+    expect((tail.items[0]?.message as { content: { text: string }[] }).content[0]?.text).toBe('u3')
   })
 })
 

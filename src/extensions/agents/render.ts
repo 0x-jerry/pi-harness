@@ -1,47 +1,60 @@
 /**
  * TUI rendering for the subagent tool call and result.
  *
- * The result transcript is rendered the same way pi's interactive chat
- * renders its own messages: user messages via `UserMessageComponent`,
- * assistant text/thinking via `AssistantMessageComponent` (with the same
- * thinking styling, truncation notices, and stop-reason handling), and tool
- * calls paired with their results via `ToolExecutionComponent` (which uses
- * pi's built-in per-tool renderers).
- *
- * Inline tool results always render the collapsed card (the tail of the
- * transcript plus a usage line) — the full transcript is only ever shown in
- * the `/subagents` modal via `renderFullResultContent`.
+ * The transcript is rebuilt on every state update from the run's message
+ * stream: assistant text always renders in full, reasoning (thinking blocks)
+ * streams while it is being generated and collapses to its first line as
+ * soon as it completes, and every tool call renders as a single row with its
+ * name, a one-line arguments preview, and its execution duration. Only the
+ * last MAX_MESSAGES messages are rendered — inline tool result and
+ * /subagents modal alike — with earlier messages folded into a
+ * "… N earlier messages" note; tool results are matched to their calls by
+ * scanning the whole transcript, so pairing also works across the window
+ * boundary. User messages reuse pi's UserMessageComponent.
  */
 
 import type { AgentToolResult } from '@earendil-works/pi-agent-core'
-import type { Message, TextContent, UserMessage } from '@earendil-works/pi-ai'
+import type {
+  AssistantMessage,
+  Message,
+  TextContent,
+  ThinkingContent,
+  ToolCall,
+  ToolResultMessage,
+  UserMessage,
+} from '@earendil-works/pi-ai'
 import {
-  AssistantMessageComponent,
   getMarkdownTheme,
-  ToolExecutionComponent,
   UserMessageComponent,
   type Theme,
   type ToolRenderResultOptions,
 } from '@earendil-works/pi-coding-agent'
 import {
   Container,
+  Markdown,
   Spacer,
   Text,
   type Component,
-  type TUI,
+  type MarkdownTheme,
 } from '@earendil-works/pi-tui'
 import { isFailedResult } from './result.ts'
 import type { SubagentCallArgs } from './schema.ts'
 import type { SubAgentResult } from './types.ts'
 
-/** Messages shown in the collapsed result (tail of the transcript). */
-const COLLAPSED_MESSAGE_COUNT = 4
+/** Number of transcript messages rendered (inline card and modal alike). */
+export const MAX_MESSAGES = 10
 
-/**
- * ToolExecutionComponent only calls `requestRender()` on the TUI for
- * redraw scheduling; embedded in a static result it is a no-op.
- */
-const STUB_TUI = { requestRender: () => {} } as unknown as TUI
+/** Max length of a tool-call arguments preview. */
+const ARGS_PREVIEW_LENGTH = 160
+
+/** Max length of the error fragment appended to a failed tool call row. */
+const TOOL_ERROR_LENGTH = 80
+
+/** Icon shown before reasoning (thinking) content. */
+export const THINK_ICON = '💭 '
+
+/** Icon shown before each tool call row. */
+export const TOOL_ICON = '🔧 '
 
 function formatTokens(count: number): string {
   if (count < 1000) return count.toString()
@@ -95,88 +108,223 @@ function userMessageText(message: UserMessage): string {
     .join('\n')
 }
 
-interface TranscriptOptions {
-  messages: Message[]
-  /** Working directory of the subagent (for built-in tool renderers). */
-  cwd: string
-  /** Expand tool executions (full output instead of truncated). */
-  expanded: boolean
-  /** Collapse thinking blocks to a single "Thinking…" label. */
-  hideThinking: boolean
-  /**
-   * TUI for embedded tool executions to request redraws. Defaults to a
-   * no-op stub: static results (collapsed card, modal snapshots) never
-   * stream, so redraw requests are unnecessary there. The modal passes the
-   * real TUI so nested tool executions behave like the live chat.
-   */
-  tui?: TUI
+/** First non-empty line, used as the collapsed reasoning preview. */
+export function firstLine(text: string): string {
+  return text.split('\n').find((line) => line.trim()) ?? text
+}
+
+/** Human-readable duration; non-finite or negative input renders as 0.0s. */
+export function formatDuration(ms: number): string {
+  const clamped = Number.isFinite(ms) ? Math.max(0, ms) : 0
+  const seconds = clamped / 1000
+  if (seconds < 60) return `${seconds.toFixed(1)}s`
+  return `${Math.floor(seconds / 60)}m${Math.round(seconds % 60)}s`
+}
+
+/** One-line preview of tool call arguments, truncated. */
+export function summarizeArgs(args: Record<string, any> | undefined): string {
+  let json: string
+  try {
+    json = JSON.stringify(args ?? {})
+  } catch {
+    json = '{}'
+  }
+  if (json.length <= ARGS_PREVIEW_LENGTH) return json
+  return `${json.slice(0, ARGS_PREVIEW_LENGTH - 1)}…`
+}
+
+/** True while the assistant message is still being generated (deltas pending). */
+export function isStreamingMessage(message: Message): boolean {
+  return message.role === 'assistant' && message.stopReason === 'pending'
+}
+
+/** A thinking part is active while it is the still-growing tail of a live message. */
+function thinkingIsActive(message: AssistantMessage, partIndex: number): boolean {
+  return (
+    isStreamingMessage(message) && partIndex === message.content.length - 1
+  )
+}
+
+function isToolResultMessage(message: Message): message is ToolResultMessage {
+  return message.role === 'toolResult'
+}
+
+/** The result matching a tool call, across the whole transcript. */
+export function findToolResult(
+  messages: Message[],
+  toolCallId: string,
+): ToolResultMessage | undefined {
+  return messages.find(
+    (
+      message,
+    ): message is ToolResultMessage =>
+      isToolResultMessage(message) && message.toolCallId === toolCallId,
+  )
+}
+
+export interface TranscriptItem {
+  message: UserMessage | AssistantMessage
+}
+
+export interface TranscriptModel {
+  /** Messages scrolled out of the render window. */
+  skipped: number
+  /** The visible window: the last MAX_MESSAGES user/assistant messages. */
+  items: TranscriptItem[]
 }
 
 /**
- * Render subagent messages exactly like pi's interactive chat: user messages
- * in `UserMessageComponent`, assistant text/thinking in
- * `AssistantMessageComponent`, and each tool call in a `ToolExecutionComponent`
- * that receives its matching `toolResult` (same pairing logic as pi's
- * `renderSessionItems`).
+ * The render window: assistant and user messages only — tool results are
+ * folded into their call's row — limited to the last MAX_MESSAGES. Pairing
+ * scans the full list, so a call at the top of the window still resolves
+ * its result even when the result itself is older.
  */
+export function splitTranscript(messages: Message[]): TranscriptModel {
+  const display = messages.filter(
+    (message): message is UserMessage | AssistantMessage =>
+      message.role === 'user' || message.role === 'assistant',
+  )
+  const items = display.slice(-MAX_MESSAGES)
+  return {
+    skipped: display.length - items.length,
+    items: items.map((message) => ({ message })),
+  }
+}
+
+interface TranscriptOptions {
+  messages: Message[]
+  theme: Theme
+}
+
+/** Render subagent messages in the compact windowed transcript. */
 function renderTranscript(options: TranscriptOptions): Component[] {
-  const { messages, cwd, expanded, hideThinking } = options
-  const tui = options.tui ?? STUB_TUI
+  const { messages, theme } = options
   const mdTheme = getMarkdownTheme()
-  const pendingTools = new Map<string, ToolExecutionComponent>()
+  const { skipped, items } = splitTranscript(messages)
   const components: Component[] = []
-
-  for (const message of messages) {
-    if (message.role === 'assistant') {
-      components.push(
-        new AssistantMessageComponent(message, hideThinking, mdTheme),
-      )
-      for (const content of message.content) {
-        if (content.type !== 'toolCall') continue
-        const toolComp = new ToolExecutionComponent(
-          content.name,
-          content.id,
-          content.arguments,
-          { showImages: false },
-          undefined,
-          tui,
-          cwd,
-        )
-        toolComp.setExpanded(expanded)
-        components.push(toolComp)
-
-        if (
-          message.stopReason === 'aborted' ||
-          message.stopReason === 'error'
-        ) {
-          // Same error text pi shows for failed tool calls.
-          const errorText =
-            message.stopReason === 'aborted'
-              ? message.errorMessage &&
-                  message.errorMessage !== 'Request was aborted'
-                ? message.errorMessage
-                : 'Operation aborted'
-              : message.errorMessage || 'Error'
-          toolComp.updateResult({
-            content: [{ type: 'text', text: errorText }],
-            isError: true,
-          })
-        } else {
-          pendingTools.set(content.id, toolComp)
-        }
-      }
-    } else if (message.role === 'toolResult') {
-      const toolComp = pendingTools.get(message.toolCallId)
-      if (toolComp) {
-        toolComp.updateResult(message)
-        pendingTools.delete(message.toolCallId)
-      }
-    } else if (message.role === 'user') {
+  if (skipped > 0) {
+    components.push(
+      new Text(theme.fg('muted', `… ${skipped} earlier messages`), 0, 0),
+    )
+  }
+  for (const { message } of items) {
+    if (message.role === 'user') {
       const text = userMessageText(message)
       if (text.trim()) components.push(new UserMessageComponent(text, mdTheme))
+    } else {
+      components.push(...renderAssistantMessage(message, messages, theme, mdTheme))
     }
   }
   return components
+}
+
+/**
+ * Assistant message: reasoning streams while it is the growing tail of a
+ * live message and otherwise collapses to its first line; text always
+ * renders fully; each tool call becomes a single name/args/duration row.
+ */
+function renderAssistantMessage(
+  message: AssistantMessage,
+  allMessages: Message[],
+  theme: Theme,
+  mdTheme: MarkdownTheme,
+): Component[] {
+  const parts: Component[] = []
+  for (let i = 0; i < message.content.length; i++) {
+    const part = message.content[i]!
+    if (part.type === 'thinking') {
+      parts.push(...renderThinking(part, i, message, theme, mdTheme))
+    } else if (part.type === 'text') {
+      if (!part.text.trim()) continue
+      parts.push(new Markdown(part.text.trim(), 1, 0, mdTheme))
+    } else if (part.type === 'toolCall') {
+      parts.push(renderToolCallRow(part, message, allMessages, theme))
+    }
+  }
+
+  // Interrupted/failed turns get the same notice pi shows in the chat. Tool
+  // calls surface their own error state, but the notice explains rows that
+  // never received a result.
+  if (
+    message.stopReason === 'length' ||
+    message.stopReason === 'aborted' ||
+    message.stopReason === 'error'
+  ) {
+    const note =
+      message.stopReason === 'length'
+        ? 'Response was truncated before completion.'
+        : message.stopReason === 'aborted'
+          ? message.errorMessage && message.errorMessage !== 'Request was aborted'
+            ? message.errorMessage
+            : 'Operation aborted'
+          : `Error: ${message.errorMessage || 'Unknown error'}`
+    parts.push(new Text(theme.fg('error', note), 1, 0))
+  }
+
+  if (parts.length === 0) return parts
+  parts.unshift(new Spacer(1))
+  return parts
+}
+
+function renderThinking(
+  part: ThinkingContent,
+  index: number,
+  message: AssistantMessage,
+  theme: Theme,
+  mdTheme: MarkdownTheme,
+): Component[] {
+  const text = part.thinking
+  if (!text.trim()) return []
+  const styled = (value: string) => theme.fg('thinkingText', theme.italic(value))
+  if (thinkingIsActive(message, index)) {
+    // Reasoning still being generated: stream the full content.
+    return [
+      new Markdown(THINK_ICON + text, 1, 0, mdTheme, {
+        color: styled,
+        italic: true,
+      }),
+    ]
+  }
+  // Reasoning complete: keep only its first line.
+  return [new Text(styled(THINK_ICON + firstLine(text)), 1, 0)]
+}
+
+function toolDuration(
+  message: AssistantMessage,
+  result: ToolResultMessage | undefined,
+): string {
+  // While a call is pending the duration reflects the last render time; no
+  // timer is kept for the inline card (the modal re-renders every second).
+  const end = result ? result.timestamp : Date.now()
+  return formatDuration(end - message.timestamp)
+}
+
+function toolErrorText(result: ToolResultMessage): string {
+  const text = result.content
+    .filter((content): content is TextContent => content.type === 'text')
+    .map((content) => content.text)
+    .find((content) => content.trim())
+  if (!text) return '(tool error)'
+  const line = firstLine(text)
+  return line.length > TOOL_ERROR_LENGTH
+    ? `${line.slice(0, TOOL_ERROR_LENGTH - 1)}…`
+    : line
+}
+
+function renderToolCallRow(
+  call: ToolCall,
+  message: AssistantMessage,
+  allMessages: Message[],
+  theme: Theme,
+): Component {
+  const result = findToolResult(allMessages, call.id)
+  let row = `${TOOL_ICON}${theme.fg('toolTitle', theme.bold(call.name))} `
+  row += theme.fg('muted', summarizeArgs(call.arguments))
+  row += ` ${theme.fg('dim', `· ${toolDuration(message, result)}`)}`
+  if (result?.isError) {
+    row += ` ${theme.fg('error', `✗ ${toolErrorText(result)}`)}`
+  }
+  return new Text(row, 1, 0)
 }
 
 export function renderSubagentCall(
@@ -197,18 +345,16 @@ export function renderSubagentCall(
 }
 
 /**
- * Full result content for the `/subagents` modal: error/status header,
- * system prompt, complete transcript, and usage. Reuses the same rendering
- * as the interactive chat via `renderTranscript` with everything expanded.
+ * Result content for the /subagents modal: error/status header, system
+ * prompt, the windowed transcript, and usage. Renders the same compact
+ * transcript as the inline card.
  */
 export function renderFullResultContent(
   result: SubAgentResult,
   theme: Theme,
-  tui?: TUI,
 ): Component {
   const isError = isFailedResult(result)
   const icon = isError ? theme.fg('error', '✗') : theme.fg('success', '✓')
-  const cwd = result.cwd ?? process.cwd()
 
   const container = new Container()
   let header = `${icon} ${theme.fg('toolTitle', theme.bold(result.agent))}${theme.fg('muted', ` (${result.agentSource})`)}`
@@ -231,10 +377,7 @@ export function renderFullResultContent(
   container.addChild(new Text(theme.fg('muted', '─── Transcript ───'), 0, 0))
   const transcript = renderTranscript({
     messages: result.messages,
-    cwd,
-    expanded: true,
-    hideThinking: false,
-    tui,
+    theme,
   })
   if (transcript.length === 0) {
     container.addChild(new Text(theme.fg('muted', '(no output)'), 0, 0))
@@ -252,11 +395,11 @@ export function renderFullResultContent(
 
 export function renderSubagentResult(
   result: AgentToolResult<SubAgentResult>,
-  _options: ToolRenderResultOptions,
+  options: ToolRenderResultOptions,
   theme: Theme,
 ): Component {
-  // Subagent rows always render the collapsed card; the full transcript
-  // lives in the `/subagents` modal (the global expand toggle is ignored).
+  // Subagent rows always render the windowed transcript; the global expand
+  // toggle is ignored.
   const r = result.details
   if (!r) {
     const text = result.content[0]
@@ -264,8 +407,8 @@ export function renderSubagentResult(
   }
 
   const isError = isFailedResult(r)
-  const icon = isError ? theme.fg('error', '✗') : theme.fg('success', '✓')
-  const cwd = r.cwd ?? process.cwd()
+  const headerIcon = options.isPartial ? '⏳' : isError ? '✗' : '✓'
+  const icon = theme.fg(isError ? 'error' : 'success', headerIcon)
 
   const container = new Container()
   let header = `${icon} ${theme.fg('toolTitle', theme.bold(r.agent))}${theme.fg('muted', ` (${r.agentSource})`)}`
@@ -286,16 +429,9 @@ export function renderSubagentResult(
       ),
     )
   }
-  const skipped = Math.max(0, r.messages.length - COLLAPSED_MESSAGE_COUNT)
-  if (skipped > 0)
-    container.addChild(
-      new Text(theme.fg('muted', `… ${skipped} earlier messages`), 0, 0),
-    )
   const transcript = renderTranscript({
-    messages: r.messages.slice(-COLLAPSED_MESSAGE_COUNT),
-    cwd,
-    expanded: false,
-    hideThinking: false,
+    messages: r.messages,
+    theme,
   })
   if (transcript.length === 0) {
     container.addChild(new Text(theme.fg('muted', '(no output)'), 0, 0))
@@ -303,7 +439,7 @@ export function renderSubagentResult(
     for (const component of transcript) container.addChild(component)
   }
   container.addChild(
-    new Text(theme.fg('muted', 'run /subagents for the full transcript'), 0, 0),
+    new Text(theme.fg('muted', 'run /subagents to browse agent tasks'), 0, 0),
   )
 
   const usageStr = formatUsageStats(r.usage, r.model)
