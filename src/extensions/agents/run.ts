@@ -37,6 +37,7 @@ import {
   type AgentSessionEvent,
 } from '@earendil-works/pi-coding-agent'
 import { emptyResult, getFinalOutput } from './result.ts'
+import { createBashWithDefaultTimeout } from './toolTimeout.ts'
 import type { AgentConfig, OnUpdateCallback, SubAgentResult } from './types.ts'
 
 /**
@@ -404,6 +405,10 @@ export async function runSingleAgent(
       // Allowlist from the agent file (e.g. "read, grep, find, ls"); when
       // omitted the default built-ins (read, bash, edit, write) are used.
       tools: agent.tools,
+      // Custom tools override built-ins by name, so this replaces the bash
+      // tool with one that injects a default timeout when the model gives
+      // none. Only agents whose allowlist includes "bash" are affected.
+      customTools: [createBashWithDefaultTimeout(cwd)],
     })
     session = created.session
     const runSession = session
