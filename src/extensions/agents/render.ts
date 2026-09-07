@@ -3,9 +3,9 @@
  *
  * The transcript is rebuilt on every state update from the run's message
  * stream: assistant text always renders in full, reasoning (thinking blocks)
- * streams while it is being generated and collapses to its first line as
+ * streams while it is being generated and collapses to a truncated preview as
  * soon as it completes, and every tool call renders as a single row with its
- * name, a one-line arguments preview, and its execution duration. Only the
+ * name, arguments, and its execution duration. Only the
  * last MAX_MESSAGES messages are rendered — inline tool result and
  * /subagents modal alike — with earlier messages folded into a
  * "… N earlier messages" note; tool results are matched to their calls by
@@ -44,11 +44,8 @@ import type { SubAgentResult } from './types.ts'
 /** Number of transcript messages rendered (inline card and modal alike). */
 export const MAX_MESSAGES = 10
 
-/** Max length of a tool-call arguments preview. */
-const ARGS_PREVIEW_LENGTH = 160
-
-/** Max length of the error fragment appended to a failed tool call row. */
-const TOOL_ERROR_LENGTH = 80
+/** Max length of a completed reasoning preview. */
+const MESSAGE_PREVIEW_LENGTH = 200
 
 /** Icon shown before reasoning (thinking) content. */
 export const THINK_ICON = '💭 '
@@ -108,9 +105,9 @@ function userMessageText(message: UserMessage): string {
     .join('\n')
 }
 
-/** First non-empty line, used as the collapsed reasoning preview. */
-export function firstLine(text: string): string {
-  return text.split('\n').find((line) => line.trim()) ?? text
+/** Cut text to `max` chars, newlines preserved; ellipsis counts in the limit. */
+export function truncate(text: string, max: number): string {
+  return text.length <= max ? text : `${text.slice(0, max - 1)}…`
 }
 
 /** Human-readable duration; non-finite or negative input renders as 0.0s. */
@@ -121,16 +118,15 @@ export function formatDuration(ms: number): string {
   return `${Math.floor(seconds / 60)}m${Math.round(seconds % 60)}s`
 }
 
-/** One-line preview of tool call arguments, truncated. */
-export function summarizeArgs(args: Record<string, any> | undefined): string {
-  let json: string
+/** Tool call arguments as compact JSON. */
+export function stringifyArgs(
+  args: Record<string, any> | undefined,
+): string {
   try {
-    json = JSON.stringify(args ?? {})
+    return JSON.stringify(args ?? {})
   } catch {
-    json = '{}'
+    return '{}'
   }
-  if (json.length <= ARGS_PREVIEW_LENGTH) return json
-  return `${json.slice(0, ARGS_PREVIEW_LENGTH - 1)}…`
 }
 
 /** True while the assistant message is still being generated (deltas pending). */
@@ -285,8 +281,8 @@ function renderThinking(
       }),
     ]
   }
-  // Reasoning complete: keep only its first line.
-  return [new Text(styled(THINK_ICON + firstLine(text)), 1, 0)]
+  // Reasoning complete: collapse to a truncated preview.
+  return [new Text(styled(THINK_ICON + truncate(text, MESSAGE_PREVIEW_LENGTH)), 1, 0)]
 }
 
 function toolDuration(
@@ -305,10 +301,7 @@ function toolErrorText(result: ToolResultMessage): string {
     .map((content) => content.text)
     .find((content) => content.trim())
   if (!text) return '(tool error)'
-  const line = firstLine(text)
-  return line.length > TOOL_ERROR_LENGTH
-    ? `${line.slice(0, TOOL_ERROR_LENGTH - 1)}…`
-    : line
+  return text
 }
 
 function renderToolCallRow(
@@ -319,7 +312,7 @@ function renderToolCallRow(
 ): Component {
   const result = findToolResult(allMessages, call.id)
   let row = `${TOOL_ICON}${theme.fg('toolTitle', theme.bold(call.name))} `
-  row += theme.fg('muted', summarizeArgs(call.arguments))
+  row += theme.fg('muted', stringifyArgs(call.arguments))
   row += ` ${theme.fg('dim', `· ${toolDuration(message, result)}`)}`
   if (result?.isError) {
     row += ` ${theme.fg('error', `✗ ${toolErrorText(result)}`)}`

@@ -3,13 +3,13 @@ import { initTheme } from '@earendil-works/pi-coding-agent'
 import type { Component, TUI } from '@earendil-works/pi-tui'
 import type { Message } from '@earendil-works/pi-ai'
 import {
-  firstLine,
+  truncate,
   formatDuration,
   isStreamingMessage,
   renderFullResultContent,
   renderSubagentResult,
   splitTranscript,
-  summarizeArgs,
+  stringifyArgs,
 } from '../../src/extensions/agents/render.ts'
 import { createSubagentsModal } from '../../src/extensions/agents/modal.ts'
 import { emptyUsage } from '../../src/extensions/agents/result.ts'
@@ -240,7 +240,7 @@ describe('reasoning rendering', () => {
     expect(out).toContain('line two')
   })
 
-  test('collapses completed reasoning to its first line', () => {
+  test('collapses completed reasoning to a truncated preview', () => {
     const out = textOf(
       renderSubagentResult(
         agentResult(
@@ -258,7 +258,28 @@ describe('reasoning rendering', () => {
     )
     expect(out).toContain('💭')
     expect(out).toContain('line one')
-    expect(out).not.toContain('line two')
+    expect(out).toContain('line two')
+  })
+
+  test('truncates completed reasoning over the preview limit', () => {
+    const out = textOf(
+      renderSubagentResult(
+        agentResult(
+          makeResult([
+            {
+              role: 'assistant',
+              stopReason: 'stop',
+              content: [thinkingPart('first line\n' + 'x'.repeat(250))],
+            } as Message,
+          ]),
+        ),
+        renderOptions,
+        theme,
+      ),
+    )
+    expect(out).toContain('first line')
+    expect(out).toContain('…')
+    expect(out).not.toContain('x'.repeat(250))
   })
 
   test('collapses reasoning as soon as the answer starts streaming', () => {
@@ -275,7 +296,7 @@ describe('reasoning rendering', () => {
       ),
     )
     expect(out).toContain('reason line one')
-    expect(out).not.toContain('reason line two')
+    expect(out).toContain('reason line two')
     expect(out).toContain('the answer')
   })
 })
@@ -319,6 +340,21 @@ describe('tool call rendering', () => {
     )
     expect(out).toContain('✗ boom')
   })
+
+  test('truncates multi-line tool errors without dropping later lines', () => {
+    const messages = [
+      toolCallMsg('tc1', 'read', { path: '/tmp/x' }),
+      toolResultMsg('tc1', {
+        isError: true,
+        text: 'boom\nline two',
+      }),
+    ]
+    const out = textOf(
+      renderSubagentResult(agentResult(makeResult(messages)), renderOptions, theme),
+    )
+    expect(out).toContain('✗ boom')
+    expect(out).toContain('line two')
+  })
 })
 
 describe('renderFullResultContent', () => {
@@ -357,10 +393,22 @@ describe('renderFullResultContent', () => {
 })
 
 describe('transcript helpers', () => {
-  test('firstLine returns the first non-empty line', () => {
-    expect(firstLine('a\nb')).toBe('a')
-    expect(firstLine('\n\nb')).toBe('b')
-    expect(firstLine('x')).toBe('x')
+  test('truncate keeps short text unchanged', () => {
+    expect(truncate('a\nb', 3)).toBe('a\nb')
+    expect(truncate('a', 200)).toBe('a')
+  })
+
+  test('truncate cuts whole text to max chars with a trailing ellipsis', () => {
+    const out = truncate('x'.repeat(300), 200)
+    expect(out.length).toBe(200)
+    expect(out.endsWith('…')).toBe(true)
+    expect(out.slice(0, 199)).toBe('x'.repeat(199))
+  })
+
+  test('truncate preserves newlines up to the limit', () => {
+    const out = truncate('head\n' + 'y'.repeat(250), 200)
+    expect(out.startsWith('head\n')).toBe(true)
+    expect(out.endsWith('…')).toBe(true)
   })
 
   test('formatDuration is human-readable and clamped', () => {
@@ -375,12 +423,11 @@ describe('transcript helpers', () => {
     expect(isStreamingMessage(userMsg('x'))).toBe(false)
   })
 
-  test('summarizeArgs flattens and truncates arguments', () => {
-    expect(summarizeArgs({ a: 1 })).toBe('{"a":1}')
-    expect(summarizeArgs(undefined)).toBe('{}')
-    const long = summarizeArgs({ a: 'x'.repeat(400) })
-    expect(long.endsWith('…')).toBe(true)
-    expect(long.length).toBeLessThan(170)
+  test('stringifyArgs returns full JSON for arguments', () => {
+    expect(stringifyArgs({ a: 1 })).toBe('{"a":1}')
+    expect(stringifyArgs(undefined)).toBe('{}')
+    const long = stringifyArgs({ a: 'x'.repeat(400) })
+    expect(long).toBe(`{"a":"${'x'.repeat(400)}"}`)
   })
 
   test('splitTranscript windows display messages and folds tool results', () => {
