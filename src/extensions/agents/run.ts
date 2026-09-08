@@ -112,17 +112,21 @@ function collectAssistantStats(
   result: SubAgentResult,
   msg: AssistantMessage,
 ): void {
-  result.usage.turns++
+  result.turns++
   const usage = msg.usage
   if (usage) {
     result.usage.input += usage.input || 0
     result.usage.output += usage.output || 0
     result.usage.cacheRead += usage.cacheRead || 0
     result.usage.cacheWrite += usage.cacheWrite || 0
-    result.usage.cost += usage.cost?.total || 0
-    result.usage.contextTokens = usage.totalTokens || 0
+    result.usage.totalTokens = usage.totalTokens || 0
+    const cost = result.usage.cost
+    cost.input += usage.cost?.input || 0
+    cost.output += usage.cost?.output || 0
+    cost.cacheRead += usage.cost?.cacheRead || 0
+    cost.cacheWrite += usage.cost?.cacheWrite || 0
+    cost.total += usage.cost?.total || 0
   }
-  if (!result.model && msg.model) result.model = msg.model
   if (msg.stopReason) result.stopReason = msg.stopReason
   if (msg.errorMessage) result.errorMessage = msg.errorMessage
 }
@@ -297,7 +301,6 @@ export async function runSingleAgent(
     task,
     agentSource: agent.source,
     cwd,
-    model: agent.model,
   })
 
   const emitUpdate = () => {
@@ -369,7 +372,6 @@ export async function runSingleAgent(
         agent: agentName,
         task,
         agentSource: agent.source,
-        model: agent.model,
         exitCode: 1,
         stderr:
           resolved.error ||
@@ -382,6 +384,10 @@ export async function runSingleAgent(
     model = parentModel
     thinkingLevel = parentThinkingLevel
   }
+
+  // Keep the resolved model on the result so the usage footer can render
+  // provider/model from the start, before the first response streams.
+  if (model) currentResult.model = model
 
   const resourceLoader = createSubagentResourceLoader(
     agent,

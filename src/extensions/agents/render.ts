@@ -5,22 +5,26 @@
  * stream: assistant text always renders in full, reasoning (thinking blocks)
  * streams while it is being generated and collapses to a truncated preview as
  * soon as it completes, and every tool call renders as a single row with its
- * name, arguments, and its execution duration. Only the
- * last MAX_MESSAGES messages are rendered — inline tool result and
- * /subagents modal alike — with earlier messages folded into a
- * "… N earlier messages" note; tool results are matched to their calls by
- * scanning the whole transcript, so pairing also works across the window
- * boundary. User messages reuse pi's UserMessageComponent.
+ * name, arguments, and its execution duration. The inline tool result
+ * renders a windowed transcript: the first user prompt always pinned above
+ * the last MAX_MESSAGES messages with what fell in between folded into a
+ * "… N earlier messages" note, while the /subagents modal renders the full
+ * transcript. Both usage footers identify the model as provider/model. Tool
+ * results are matched to their calls by scanning the whole transcript, so
+ * pairing also works across the window boundary. User messages reuse pi's
+ * UserMessageComponent.
  */
 
 import type { AgentToolResult } from '@earendil-works/pi-agent-core'
 import type {
   AssistantMessage,
   Message,
+  Model,
   TextContent,
   ThinkingContent,
   ToolCall,
   ToolResultMessage,
+  Usage,
   UserMessage,
 } from '@earendil-works/pi-ai'
 import {
@@ -41,8 +45,8 @@ import { isFailedResult } from './result.ts'
 import type { SubagentCallArgs } from './schema.ts'
 import type { SubAgentResult } from './types.ts'
 
-/** Number of transcript messages rendered (inline card and modal alike). */
-export const MAX_MESSAGES = 10
+/** Tail window of transcript messages rendered in the inline tool result. */
+export const MAX_MESSAGES = 5
 
 /** Max length of a completed reasoning preview. */
 const MESSAGE_PREVIEW_LENGTH = 200
@@ -61,40 +65,19 @@ function formatTokens(count: number): string {
 }
 
 export function formatUsageStats(
-  usage: {
-    input: number
-    output: number
-    cacheRead: number
-    cacheWrite: number
-    cost: number
-    contextTokens?: number
-    turns?: number
-  },
-  model?: string,
+  usage: Usage,
+  model?: Model<any>,
 ): string {
   const parts: string[] = []
-  if (usage.turns)
-    parts.push(`${usage.turns} turn${usage.turns > 1 ? 's' : ''}`)
   if (usage.input) parts.push(`↑${formatTokens(usage.input)}`)
   if (usage.output) parts.push(`↓${formatTokens(usage.output)}`)
   if (usage.cacheRead) parts.push(`R${formatTokens(usage.cacheRead)}`)
   if (usage.cacheWrite) parts.push(`W${formatTokens(usage.cacheWrite)}`)
-  if (usage.cost) parts.push(`$${usage.cost.toFixed(4)}`)
-  if (usage.contextTokens && usage.contextTokens > 0) {
-    parts.push(`ctx:${formatTokens(usage.contextTokens)}`)
-  }
-  if (model) parts.push(model)
+  if (usage.cost.total) parts.push(`$${usage.cost.total.toFixed(4)}`)
+  if (usage.totalTokens > 0) parts.push(`ctx:${formatTokens(usage.totalTokens)}`)
+  if (model)
+    parts.push(model.provider ? `${model.provider}/${model.id}` : model.id)
   return parts.join(' ')
-}
-
-/**
- * One-line preview of the system prompt for the collapsed view: the first
- * non-empty line, truncated.
- */
-function systemPromptPreview(prompt: string): string {
-  const firstLine = prompt.split('\n').find((line) => line.trim()) ?? ''
-  if (firstLine.length <= 72) return firstLine
-  return `${firstLine.slice(0, 69)}...`
 }
 
 function userMessageText(message: UserMessage): string {
@@ -163,53 +146,103 @@ export interface TranscriptItem {
 }
 
 export interface TranscriptModel {
-  /** Messages scrolled out of the render window. */
+  /** Messages hidden between the pinned prompt and the tail window. */
   skipped: number
-  /** The visible window: the last MAX_MESSAGES user/assistant messages. */
+  /**
+   * The first user prompt, always rendered once it scrolled out of the tail
+   * window (inline tool result only).
+   */
+  pinned?: TranscriptItem
+  /** The visible tail of user/assistant messages. */
   items: TranscriptItem[]
 }
 
-/**
- * The render window: assistant and user messages only — tool results are
- * folded into their call's row — limited to the last MAX_MESSAGES. Pairing
- * scans the full list, so a call at the top of the window still resolves
- * its result even when the result itself is older.
- */
-export function splitTranscript(messages: Message[]): TranscriptModel {
-  const display = messages.filter(
+/** User/assistant messages in order; tool results stay folded into their call rows. */
+function displayMessages(
+  messages: Message[],
+): (UserMessage | AssistantMessage)[] {
+  return messages.filter(
     (message): message is UserMessage | AssistantMessage =>
       message.role === 'user' || message.role === 'assistant',
   )
+}
+
+/**
+ * The inline tool result window: the first user prompt stays pinned above
+ * the last MAX_MESSAGES user/assistant messages whenever the tail would
+ * hide it, so the card always shows what the agent was asked to do. Tool
+ * results are matched to their calls by scanning the whole transcript,
+ * which also works across the window boundary.
+ */
+export function splitTranscript(messages: Message[]): TranscriptModel {
+  const display = displayMessages(messages)
   const items = display.slice(-MAX_MESSAGES)
+  const promptIndex = display.findIndex((message) => message.role === 'user')
+  if (promptIndex !== -1 && promptIndex < display.length - items.length) {
+    return {
+      skipped: display.length - MAX_MESSAGES - 1,
+      pinned: { message: display[promptIndex]! },
+      items: items.map((message) => ({ message })),
+    }
+  }
   return {
     skipped: display.length - items.length,
     items: items.map((message) => ({ message })),
   }
 }
 
-interface TranscriptOptions {
-  messages: Message[]
-  theme: Theme
+/** Full transcript model for the /subagents modal: every message, nothing folded. */
+function fullTranscript(messages: Message[]): TranscriptModel {
+  const display = displayMessages(messages)
+  return { skipped: 0, items: display.map((message) => ({ message })) }
 }
 
-/** Render subagent messages in the compact windowed transcript. */
-function renderTranscript(options: TranscriptOptions): Component[] {
-  const { messages, theme } = options
+/** Render one transcript message; returns [] when nothing should render. */
+function renderTranscriptMessage(
+  message: UserMessage | AssistantMessage,
+  allMessages: Message[],
+  theme: Theme,
+  mdTheme: MarkdownTheme,
+): Component[] {
+  if (message.role === 'user') {
+    const text = userMessageText(message)
+    if (!text.trim()) return []
+    return [new UserMessageComponent(text, mdTheme)]
+  }
+  return renderAssistantMessage(message, allMessages, theme, mdTheme)
+}
+
+/**
+ * Render the transcript for one result view: 'windowed' pins the first user
+ * prompt above the last MAX_MESSAGES messages (inline tool result), 'full'
+ * renders every message (the /subagents modal).
+ */
+function renderTranscript(
+  messages: Message[],
+  theme: Theme,
+  mode: 'windowed' | 'full',
+): Component[] {
+  const model =
+    mode === 'windowed' ? splitTranscript(messages) : fullTranscript(messages)
   const mdTheme = getMarkdownTheme()
-  const { skipped, items } = splitTranscript(messages)
   const components: Component[] = []
-  if (skipped > 0) {
+  if (model.pinned) {
     components.push(
-      new Text(theme.fg('muted', `… ${skipped} earlier messages`), 0, 0),
+      ...renderTranscriptMessage(
+        model.pinned.message,
+        messages,
+        theme,
+        mdTheme,
+      ),
     )
   }
-  for (const { message } of items) {
-    if (message.role === 'user') {
-      const text = userMessageText(message)
-      if (text.trim()) components.push(new UserMessageComponent(text, mdTheme))
-    } else {
-      components.push(...renderAssistantMessage(message, messages, theme, mdTheme))
-    }
+  if (model.skipped > 0) {
+    components.push(
+      new Text(theme.fg('muted', `… ${model.skipped} earlier messages`), 0, 0),
+    )
+  }
+  for (const { message } of model.items) {
+    components.push(...renderTranscriptMessage(message, messages, theme, mdTheme))
   }
   return components
 }
@@ -339,8 +372,7 @@ export function renderSubagentCall(
 
 /**
  * Result content for the /subagents modal: error/status header, system
- * prompt, the windowed transcript, and usage. Renders the same compact
- * transcript as the inline card.
+ * prompt, the full transcript, and usage.
  */
 export function renderFullResultContent(
   result: SubAgentResult,
@@ -368,10 +400,7 @@ export function renderFullResultContent(
   }
   container.addChild(new Spacer(1))
   container.addChild(new Text(theme.fg('muted', '─── Transcript ───'), 0, 0))
-  const transcript = renderTranscript({
-    messages: result.messages,
-    theme,
-  })
+  const transcript = renderTranscript(result.messages, theme, 'full')
   if (transcript.length === 0) {
     container.addChild(new Text(theme.fg('muted', '(no output)'), 0, 0))
   } else {
@@ -413,19 +442,7 @@ export function renderSubagentResult(
       new Text(theme.fg('error', `Error: ${r.errorMessage}`), 0, 0),
     )
 
-  if (r.systemPrompt) {
-    container.addChild(
-      new Text(
-        theme.fg('muted', `system prompt: ${systemPromptPreview(r.systemPrompt)}`),
-        0,
-        0,
-      ),
-    )
-  }
-  const transcript = renderTranscript({
-    messages: r.messages,
-    theme,
-  })
+  const transcript = renderTranscript(r.messages, theme, 'windowed')
   if (transcript.length === 0) {
     container.addChild(new Text(theme.fg('muted', '(no output)'), 0, 0))
   } else {

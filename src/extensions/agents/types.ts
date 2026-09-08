@@ -1,5 +1,5 @@
 import type { AgentToolResult } from '@earendil-works/pi-agent-core'
-import type { Message } from '@earendil-works/pi-ai'
+import type { Message, Model, Usage } from '@earendil-works/pi-ai'
 
 /** Where an agent definition lives. */
 export type AgentSource = 'builtin' | 'user' | 'project'
@@ -12,16 +12,6 @@ export interface AgentConfig {
   systemPrompt: string
   source: AgentSource
   filePath: string
-}
-
-export interface UsageStats {
-  input: number
-  output: number
-  cacheRead: number
-  cacheWrite: number
-  cost: number
-  contextTokens: number
-  turns: number
 }
 
 /** Result of one subagent run. */
@@ -41,8 +31,9 @@ export interface SubAgentResult {
   exitCode: number
   messages: Message[]
   stderr: string
-  usage: UsageStats
-  model?: string
+  usage: Usage
+  turns: number
+  model?: Model<any>
   stopReason?: string
   errorMessage?: string
 }

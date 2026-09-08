@@ -88,10 +88,10 @@ describe('applySessionEvent', () => {
     ).toBe(true)
     expect(r.messages).toHaveLength(1)
     expect(stopReasonOf(r.messages[0])).toBe('stop')
-    expect(r.usage.turns).toBe(1)
+    expect(r.turns).toBe(1)
     expect(r.usage.input).toBe(10)
     expect(r.usage.output).toBe(5)
-    expect(r.usage.cost).toBeCloseTo(0.001)
+    expect(r.usage.cost.total).toBeCloseTo(0.001)
   })
 
   test('orders user, assistant, and tool-result messages and counts one turn', () => {
@@ -104,7 +104,7 @@ describe('applySessionEvent', () => {
       event('message_start', assistant('', { stopReason: 'pending' })),
     )
     applySessionEvent(r, event('message_end', toolCallMessage()))
-    expect(r.usage.turns).toBe(1)
+    expect(r.turns).toBe(1)
 
     const toolResult = {
       role: 'toolResult',
@@ -142,7 +142,7 @@ describe('applySessionEvent', () => {
     expect(stopReasonOf(r.messages[0])).toBe('aborted')
     expect(r.stopReason).toBe('aborted')
     expect(r.errorMessage).toBe('upstream died')
-    expect(r.usage.turns).toBe(1)
+    expect(r.turns).toBe(1)
   })
 
   test('collapses pi\'s synthetic failure pair over a live partial', () => {
@@ -164,7 +164,7 @@ describe('applySessionEvent', () => {
     expect(tail.stopReason).toBe('aborted')
     expect(tail.errorMessage).toBe('cancelled')
     expect(r.stopReason).toBe('aborted')
-    expect(r.usage.turns).toBe(1)
+    expect(r.turns).toBe(1)
   })
 
   test('ignores a synthetic failure with no preceding partial', () => {
@@ -175,7 +175,7 @@ describe('applySessionEvent', () => {
 
     expect(r.messages).toHaveLength(0)
     expect(r.stopReason).toBe('error')
-    expect(r.usage.turns).toBe(0)
+    expect(r.turns).toBe(0)
   })
 
   test('accumulates usage once per turn', () => {
@@ -196,7 +196,7 @@ describe('applySessionEvent', () => {
     expect(r.messages).toHaveLength(2)
     expect(stopReasonOf(r.messages[0])).toBe('stop')
     expect(stopReasonOf(r.messages[1])).toBe('stop')
-    expect(r.usage.turns).toBe(2)
+    expect(r.turns).toBe(2)
     expect(r.usage.input).toBe(20)
     expect(r.usage.output).toBe(10)
   })

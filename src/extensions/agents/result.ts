@@ -1,15 +1,14 @@
-import type { Message } from '@earendil-works/pi-ai'
-import type { SubAgentResult, UsageStats } from './types.ts'
+import type { Message, Usage } from '@earendil-works/pi-ai'
+import type { SubAgentResult } from './types.ts'
 
-export function emptyUsage(): UsageStats {
+export function emptyUsage(): Usage {
   return {
     input: 0,
     output: 0,
     cacheRead: 0,
     cacheWrite: 0,
-    cost: 0,
-    contextTokens: 0,
-    turns: 0,
+    totalTokens: 0,
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
   }
 }
 
@@ -25,6 +24,7 @@ export function emptyResult(
     messages: [],
     stderr: '',
     usage: emptyUsage(),
+    turns: 0,
     ...overrides,
   }
 }

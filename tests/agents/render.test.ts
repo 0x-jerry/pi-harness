@@ -1,10 +1,11 @@
 import { beforeAll, describe, expect, test, vi } from 'vitest'
 import { initTheme } from '@earendil-works/pi-coding-agent'
 import type { Component, TUI } from '@earendil-works/pi-tui'
-import type { Message } from '@earendil-works/pi-ai'
+import type { Message, Model } from '@earendil-works/pi-ai'
 import {
   truncate,
   formatDuration,
+  formatUsageStats,
   isStreamingMessage,
   renderFullResultContent,
   renderSubagentResult,
@@ -42,6 +43,11 @@ const theme = stubTheme()
 
 /** Minimal ToolRenderResultOptions for renderResult calls. */
 const renderOptions = { expanded: false, isPartial: false }
+
+/** Minimal Model stub: only the fields rendering reads. */
+function stubModel(id: string, provider?: string): Model<any> {
+  return { id, provider } as Model<any>
+}
 
 function userMsg(text: string): Message {
   return { role: 'user', content: [{ type: 'text', text }] } as Message
@@ -108,7 +114,8 @@ function makeResult(
     messages,
     stderr: '',
     usage: emptyUsage(),
-    model: 'claude',
+    turns: 0,
+    model: stubModel('claude'),
     ...overrides,
   }
 }
@@ -178,7 +185,7 @@ describe('renderSubagentResult', () => {
     expect(out).toContain('⏳')
   })
 
-  test('windows long transcripts and reports skipped messages', () => {
+  test('pins the first prompt above the windowed tail of long transcripts', () => {
     const messages: Message[] = []
     for (let i = 1; i <= 7; i++) {
       messages.push(userMsg(`m${i}u`))
@@ -187,11 +194,62 @@ describe('renderSubagentResult', () => {
     const out = textOf(
       renderSubagentResult(agentResult(makeResult(messages)), renderOptions, theme),
     )
-    expect(out).toContain('… 4 earlier messages')
-    expect(out).toContain('m3u')
+    expect(out).toContain('m1u')
+    expect(out).toContain('… 8 earlier messages')
     expect(out).toContain('m7a')
+    expect(out).not.toContain('m1a')
     expect(out).not.toContain('m2a')
-    expect(out).not.toContain('m1u')
+    expect(out).not.toContain('m3u')
+  })
+
+  test('renders the whole transcript when it fits the window plus the prompt', () => {
+    const messages: Message[] = []
+    for (let i = 1; i <= 3; i++) {
+      messages.push(userMsg(`s${i}u`))
+      messages.push(assistantMsg(`s${i}a`))
+    }
+    const model = splitTranscript(messages)
+    expect(model.pinned?.message).toBe(messages[0])
+    expect(model.skipped).toBe(0)
+    expect(model.items).toHaveLength(5)
+    expect(model.items.map((item) => item.message)).not.toContain(messages[0])
+    const out = textOf(
+      renderSubagentResult(agentResult(makeResult(messages)), renderOptions, theme),
+    )
+    expect(out).not.toContain('earlier messages')
+    expect(out).toContain('s1u')
+    expect(out).toContain('s3a')
+  })
+
+  test('labels the usage footer model as provider/model', () => {
+    const out = textOf(
+      renderSubagentResult(
+        agentResult(
+          makeResult([], { model: stubModel('qwen3.8-flash', 'qwen-token-plan-cn') }),
+        ),
+        renderOptions,
+        theme,
+      ),
+    )
+    expect(out).toContain('qwen-token-plan-cn/qwen3.8-flash')
+    expect(out.split('\n')[0]).not.toContain('qwen')
+  })
+
+  test('does not render the system prompt', () => {
+    const out = textOf(
+      renderSubagentResult(
+        agentResult(
+          makeResult([userMsg('hi'), assistantMsg('ok')], {
+            systemPrompt: 'You are a reviewer.',
+          }),
+        ),
+        renderOptions,
+        theme,
+      ),
+    )
+    expect(out).toContain('ok')
+    expect(out).not.toContain('system prompt')
+    expect(out).not.toContain('You are a reviewer.')
   })
 
   test('shows error status for failed results', () => {
@@ -358,7 +416,7 @@ describe('tool call rendering', () => {
 })
 
 describe('renderFullResultContent', () => {
-  test('renders system prompt, windowed transcript, and usage', () => {
+  test('renders system prompt, full transcript, and usage', () => {
     const result = makeResult(
       [userMsg('hello world'), assistantMsg('hi back')],
       { systemPrompt: 'You are a reviewer.' },
@@ -371,17 +429,16 @@ describe('renderFullResultContent', () => {
     expect(out).toContain('hi back')
   })
 
-  test('windows the transcript to the last 10 messages', () => {
+  test('renders the full transcript without windowing', () => {
     const messages: Message[] = []
     for (let i = 1; i <= 6; i++) {
       messages.push(userMsg(`w${i}u`))
       messages.push(assistantMsg(`w${i}a`))
     }
     const out = textOf(renderFullResultContent(makeResult(messages), theme))
-    expect(out).toContain('… 2 earlier messages')
+    expect(out).not.toContain('earlier messages')
+    expect(out).toContain('w1u')
     expect(out).toContain('w6a')
-    expect(out).toContain('w2u')
-    expect(out).not.toContain('w1u')
   })
 
   test('handles a running task with no output yet', () => {
@@ -423,6 +480,11 @@ describe('transcript helpers', () => {
     expect(isStreamingMessage(userMsg('x'))).toBe(false)
   })
 
+  test('formatUsageStats falls back to the bare model without a provider', () => {
+    expect(formatUsageStats(emptyUsage(), stubModel('claude'))).toBe('claude')
+    expect(formatUsageStats(emptyUsage())).toBe('')
+  })
+
   test('stringifyArgs returns full JSON for arguments', () => {
     expect(stringifyArgs({ a: 1 })).toBe('{"a":1}')
     expect(stringifyArgs(undefined)).toBe('{}')
@@ -430,14 +492,15 @@ describe('transcript helpers', () => {
     expect(long).toBe(`{"a":"${'x'.repeat(400)}"}`)
   })
 
-  test('splitTranscript windows display messages and folds tool results', () => {
+  test('splitTranscript pins the first prompt above the windowed tail', () => {
     const messages: Message[] = [
       userMsg('u1'),
       assistantMsg('a1'),
       toolResultMsg('tc1'),
     ]
-    const { skipped, items } = splitTranscript(messages)
+    const { skipped, pinned, items } = splitTranscript(messages)
     expect(skipped).toBe(0)
+    expect(pinned).toBeUndefined()
     expect(items.map((item) => item.message.role)).toEqual(['user', 'assistant'])
 
     const many = [
@@ -457,10 +520,19 @@ describe('transcript helpers', () => {
       assistantMsg('a7'),
     ]
     const tail = splitTranscript(many)
-    expect(tail.skipped).toBe(4)
-    expect(tail.items).toHaveLength(10)
-    expect(tail.items[0]?.message.role).toBe('user')
-    expect((tail.items[0]?.message as { content: { text: string }[] }).content[0]?.text).toBe('u3')
+    expect(tail.skipped).toBe(8)
+    expect(tail.pinned?.message).toBe(many[0])
+    expect(tail.items).toHaveLength(5)
+    expect(tail.items.map((item) => item.message.role)).toEqual([
+      'assistant',
+      'user',
+      'assistant',
+      'user',
+      'assistant',
+    ])
+    expect(
+      (tail.items[0]?.message as { content: { text: string }[] }).content[0]?.text,
+    ).toBe('a5')
   })
 })
 
