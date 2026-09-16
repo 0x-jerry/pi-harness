@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import type { ToolGateConfig } from '../../src/extensions/tool-gate/config.ts'
+import type { ToolGateConfig } from '../../src/tool-gate/config.ts'
 import {
   DEFAULT_RULES,
   buildSnippet,
@@ -7,8 +7,8 @@ import {
   isAllowListed,
   matchRule,
   truncate,
-} from '../../src/extensions/tool-gate/rules.ts'
-import type { ToolGateRule } from '../../src/extensions/tool-gate/rules.ts'
+} from '../../src/tool-gate/rules.ts'
+import type { ToolGateRule } from '../../src/tool-gate/rules.ts'
 
 const rule = (overrides: Partial<ToolGateRule>): ToolGateRule => ({
   id: 'test-rule',

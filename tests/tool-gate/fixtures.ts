@@ -1,4 +1,4 @@
-import type { ToolGateRule } from '../../src/extensions/tool-gate/rules.ts'
+import type { ToolGateRule } from '../../src/tool-gate/rules.ts'
 
 /** Shared minimal rule fixture for tool-gate tests. */
 export const rule = (overrides: Partial<ToolGateRule>): ToolGateRule => ({

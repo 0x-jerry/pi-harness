@@ -11,11 +11,11 @@ import {
   renderSubagentResult,
   splitTranscript,
   stringifyArgs,
-} from '../../src/extensions/agents/render.ts'
-import { createSubagentsModal } from '../../src/extensions/agents/modal.ts'
-import { emptyUsage } from '../../src/extensions/agents/result.ts'
-import type { SubagentTask } from '../../src/extensions/agents/store.ts'
-import type { SubAgentResult } from '../../src/extensions/agents/types.ts'
+} from '../../src/agents/render.ts'
+import { createSubagentsModal } from '../../src/agents/modal.ts'
+import { emptyUsage } from '../../src/agents/result.ts'
+import type { SubagentTask } from '../../src/agents/store.ts'
+import type { SubAgentResult } from '../../src/agents/types.ts'
 
 beforeAll(() => {
   // The transcript renderer uses pi's global markdown theme.

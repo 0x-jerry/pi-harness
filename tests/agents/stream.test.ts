@@ -1,9 +1,9 @@
 import { describe, expect, test } from 'vitest'
 import type { AgentSessionEvent } from '@earendil-works/pi-coding-agent'
 import type { Message } from '@earendil-works/pi-ai'
-import { applySessionEvent } from '../../src/extensions/agents/run.ts'
-import { emptyResult } from '../../src/extensions/agents/result.ts'
-import type { SubAgentResult } from '../../src/extensions/agents/types.ts'
+import { applySessionEvent } from '../../src/agents/run.ts'
+import { emptyResult } from '../../src/agents/result.ts'
+import type { SubAgentResult } from '../../src/agents/types.ts'
 
 function result(): SubAgentResult {
   return emptyResult({ agent: 'reviewer', task: 't' })

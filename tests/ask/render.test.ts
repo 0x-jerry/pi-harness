@@ -5,8 +5,8 @@ import {
   renderAskResult,
   resolveItems,
   type AskDetails,
-} from '../../src/extensions/ask/render.ts'
-import type { AskCallArgs } from '../../src/extensions/ask/schema.ts'
+} from '../../src/ask/render.ts'
+import type { AskCallArgs } from '../../src/ask/schema.ts'
 
 /** Minimal theme stub: wraps colors in <color> markers for assertion. */
 function stubTheme(): any {

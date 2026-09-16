@@ -3,7 +3,7 @@ import {
   createBashWithDefaultTimeout,
   DEFAULT_BASH_TIMEOUT_SECONDS,
   withBashDefaultTimeout,
-} from '../../src/extensions/agents/toolTimeout.ts'
+} from '../../src/agents/toolTimeout.ts'
 
 interface RecordedCall {
   toolCallId: string

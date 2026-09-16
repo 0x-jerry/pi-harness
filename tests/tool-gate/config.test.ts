@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'vitest'
-import { DEFAULT_CONFIG, loadToolGateConfig } from '../../src/extensions/tool-gate/config.ts'
+import { DEFAULT_CONFIG, loadToolGateConfig } from '../../src/tool-gate/config.ts'
 import { makeTmpEnv, type TmpEnv } from './helpers.ts'
 
 const envs: TmpEnv[] = []

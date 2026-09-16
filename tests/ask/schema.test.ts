@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest'
 import { Value } from 'typebox/value'
-import { AskParams } from '../../src/extensions/ask/schema.ts'
+import { AskParams } from '../../src/ask/schema.ts'
 
 describe('AskParams schema', () => {
   test('is an object with a single `questions` array property', () => {

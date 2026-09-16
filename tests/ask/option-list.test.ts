@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest'
 import type { SelectItem, SelectListTheme } from '@earendil-works/pi-tui'
-import { OptionList } from '../../src/extensions/ask/option-list.ts'
+import { OptionList } from '../../src/ask/option-list.ts'
 
 /** Minimal theme stub with <color> markers for assertion. */
 function stubTheme(): SelectListTheme {

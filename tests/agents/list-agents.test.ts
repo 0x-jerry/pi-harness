@@ -3,7 +3,7 @@ import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent'
-import extension from '../../src/extensions/agents/index.ts'
+import extension from '../../src/agents/index.ts'
 
 interface RegisteredTool {
   name: string

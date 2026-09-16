@@ -5,7 +5,7 @@ import {
   extractMessageText,
   parseVerdict,
   redactAndTruncate,
-} from '../../src/extensions/tool-gate/copilot.ts'
+} from '../../src/tool-gate/copilot.ts'
 import { rule } from './fixtures.ts'
 
 describe('parseVerdict', () => {

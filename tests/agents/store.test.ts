@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test } from 'vitest'
-import { emptyResult, emptyUsage, isFailedResult } from '../../src/extensions/agents/result.ts'
+import { emptyResult, emptyUsage, isFailedResult } from '../../src/agents/result.ts'
 import {
   addTask,
   clearTasks,
@@ -10,9 +10,9 @@ import {
   TASK_ENTRY_TYPE,
   taskRecord,
   updateTask,
-} from '../../src/extensions/agents/store.ts'
-import type { SubagentTaskRecord } from '../../src/extensions/agents/store.ts'
-import type { SubAgentResult } from '../../src/extensions/agents/types.ts'
+} from '../../src/agents/store.ts'
+import type { SubagentTaskRecord } from '../../src/agents/store.ts'
+import type { SubAgentResult } from '../../src/agents/types.ts'
 
 /** Session entry fixtures for restoreTasks. */
 function customRecordEntry(record: SubagentTaskRecord): any {

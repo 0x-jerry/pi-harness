@@ -1,8 +1,8 @@
 import { describe, expect, test } from 'vitest'
 import type { Component } from '@earendil-works/pi-tui'
-import registerAskExtension from '../../src/extensions/ask/index.ts'
-import type { AskDetails } from '../../src/extensions/ask/render.ts'
-import type { AskCallArgs } from '../../src/extensions/ask/schema.ts'
+import registerAskExtension from '../../src/ask/index.ts'
+import type { AskDetails } from '../../src/ask/render.ts'
+import type { AskCallArgs } from '../../src/ask/schema.ts'
 
 /* ------------------------------------------------------------------ */
 /* Test harness                                                        */
