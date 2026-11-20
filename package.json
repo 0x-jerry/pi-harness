@@ -31,16 +31,16 @@
     "release": "x-release"
   },
   "peerDependencies": {
-    "@earendil-works/pi-ai": "^1.5.2",
-    "@earendil-works/pi-agent-core": "^1.5.2",
-    "@earendil-works/pi-coding-agent": "^1.5.2",
-    "@earendil-works/pi-tui": "^1.5.2",
+    "@earendil-works/pi-ai": "^1.6.0",
+    "@earendil-works/pi-agent-core": "^1.6.0",
+    "@earendil-works/pi-coding-agent": "^1.6.0",
+    "@earendil-works/pi-tui": "^1.6.0",
     "typebox": "^1.4.7"
   },
   "devDependencies": {
     "@0x-jerry/x-release": "^3.0.5",
-    "@earendil-works/pi-ai": "^1.5.2",
-    "@earendil-works/pi-coding-agent": "^1.5.2",
+    "@earendil-works/pi-ai": "^1.6.0",
+    "@earendil-works/pi-coding-agent": "^1.6.0",
     "typescript": "^7.0.2",
     "vitest": "^5.1.1"
   },
